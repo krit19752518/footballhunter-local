@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Match {
+  id          Int      @id
+  name        String
+  leagueName  String
+  homeTeam    String
+  awayTeam    String
+  startTime   DateTime
+  scoreHome   Int      @default(0)
+  scoreAway   Int      @default(0)
+  status      String?  
+  updatedAt   DateTime @updatedAt
+  odds        Odds[]
+  signals     Signal[]
+}
+
+model Odds {
+  id          String   @id @default(cuid())
+  matchId     Int
+  match       Match    @relation(fields: [matchId], references: [id])
+  type        String   // HDP, OU, 1X2
+  line        String?  
+  homeOdds    Float?
+  awayOdds    Float?
+  drawOdds    Float?
+  overOdds    Float?
+  underOdds   Float?
+  rawLine     Float?   
+  updatedAt   DateTime @updatedAt
+  history     OddsHistory[]
+}
+
+model OddsHistory {
+  id        String   @id @default(cuid())
+  oddsId    String
+  odds      Odds     @relation(fields: [oddsId], references: [id])
+  line      String?
+  homeOdds  Float?
+  awayOdds  Float?
+  drawOdds  Float?
+  overOdds  Float?
+  underOdds Float?
+  createdAt DateTime @default(now())
+}
+
+model Signal {
+  id          String   @id @default(cuid())
+  matchId     Int
+  match       Match    @relation(fields: [matchId], references: [id])
+  logicType   String   
+  message     String
+  value       String?  
+  createdAt   DateTime @default(now())
+  isWon       Boolean? 
+}
