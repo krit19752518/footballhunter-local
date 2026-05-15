@@ -108,56 +108,65 @@ export class BrowserService {
         return;
       }
 
-      // 3. ค้นหาคู่บอลในผลลัพธ์ที่ปรากฏ
+      // 3. ค้นหาคู่บอลในผลลัพธ์ที่ปรากฏ (รอสูงสุด 5 วินาที)
       botLog(`[AUTO-BOT] 🔍 Scanning for match: ${homeKey} vs ${awayKey}`);
       let matchRow: any = null;
-      
-      const possibleRows = page.locator('div, li, a').filter({ hasText: homeKey }).filter({ hasText: awayKey });
-      const count = await possibleRows.count();
-      
-      botLog(`[AUTO-BOT] Found ${count} potential matches containing team keys.`);
+      let found = false;
 
-      for (let i = 0; i < count; i++) {
-        const candidate = possibleRows.nth(i);
-        if (await candidate.isVisible()) {
-          const box = await candidate.boundingBox();
-          if (box && box.height > 30) { 
-            matchRow = candidate;
-            break;
+      for (let retry = 0; retry < 10; retry++) { // 10 รอบ รอบละ 500ms = 5 วินาที
+          const possibleRows = page.locator('div, li, a').filter({ hasText: homeKey }).filter({ hasText: awayKey });
+          const count = await possibleRows.count();
+          
+          for (let i = 0; i < count; i++) {
+            const candidate = possibleRows.nth(i);
+            if (await candidate.isVisible()) {
+              const box = await candidate.boundingBox();
+              if (box && box.height > 30) { 
+                matchRow = candidate;
+                found = true;
+                break;
+              }
+            }
           }
-        }
+          
+          if (found) break;
+          await page.waitForTimeout(500);
       }
 
       if (matchRow) {
         botLog(`[AUTO-BOT] ✅ Match found! Clicking to open odds page...`);
         await matchRow.scrollIntoViewIfNeeded().catch(() => {});
+        await page.waitForTimeout(2000); // หน่วงเวลา 2 วินาทีตามขอ
 
-        // พยายามคลิกจุดกึ่งกลางของแถว (หรือหาตัวประกอบย่อยที่มีคลาส _center_)
-        const centerEl = matchRow.locator('div[class*="_center_"]').first();
-        if (await centerEl.isVisible()) {
-           await centerEl.click({ force: true, timeout: 3000 }).catch(() => matchRow.click({ force: true }));
+        // พยายามคลิกจุดกึ่งกลางของแถว หรือหาปุ่ม/ลิงก์ภายใน
+        const clickTargets = matchRow.locator('div[class*="_center_"], .match-link, a, .team-name').first();
+        if (await clickTargets.isVisible()) {
+           await clickTargets.click({ force: true, timeout: 3000 }).catch(() => matchRow.click({ force: true }));
         } else {
            await matchRow.click({ force: true }).catch(() => {});
         }
         
         // รอเช็คว่าหน้าเปลี่ยนจริงไหม (เช็คคำที่เป็นเอกลักษณ์ของหน้าราคา)
         let arrived = false;
-        for (let i = 0; i < 8; i++) { // รอสูงสุด 4 วินาที
+        for (let i = 0; i < 10; i++) { // เพิ่มเป็น 5 วินาที (10 * 500ms)
             await page.waitForTimeout(500);
             const isOddsPage = await page.locator('div, span').filter({ hasText: /^แฮนดิแคป & สูง\/ต่ำ$/ }).first().isVisible().catch(() => false);
             if (isOddsPage) {
                 arrived = true;
                 break;
             }
+            await page.waitForTimeout(1000); // หน่วงเวลาเช็คหน้าเปลี่ยน
             // ถ้ายังไม่เปลี่ยนหน้า ลองใช้ JS Click ซ้ำที่ตัวแถว
-            if (i === 4) {
+            if (i === 5) {
                 botLog(`[AUTO-BOT] ⚠️ Not moved yet, trying JS click fallback...`);
-                await matchRow.evaluate((el: HTMLElement) => el.click());
+                await matchRow.evaluate((el: HTMLElement) => el.click()).catch(() => {});
             }
         }
 
         if (arrived) {
-            botLog(`[AUTO-BOT] 🚩 Arrived at Odds Page. Searching for price: ${targetLine}`);
+            botLog(`[AUTO-BOT] 🚩 Arrived at Odds Page. Waiting 3s for stabilization...`);
+            await page.waitForTimeout(3000); // รอให้ราคาและหน้าจอรีเฟรชจนนิ่ง
+            botLog(`[AUTO-BOT] 🔍 Searching for price: ${targetLine}`);
             
             // 1. ระบุชื่อหัวข้อ Section ที่ต้องการ
             const isFH = betSide.includes('ครึ่งแรก') || task.matchName.includes('ครึ่งแรก') || (targetLine && targetLine.includes('ครึ่งแรก'));
@@ -194,58 +203,149 @@ export class BrowserService {
                     botLog(`[AUTO-BOT] ✅ Found Section: ${sectionTitle}`);
                     
                     const cleanTarget = (targetLine || "").replace(/[\[\]]/g, '').trim();
-                    const betBoxes = targetSection.locator('div, span').filter({ hasText: new RegExp(`^${cleanTarget}$`) }).locator('xpath=ancestor::div[contains(@class, "_bet-box_")]').first();
-                    
-                    // แผนสำรองในการหาปุ่มราคา
                     let targetBox: any = null;
-                    if (await betBoxes.isVisible()) {
-                        targetBox = betBoxes;
-                    } else {
-                        // ถ้าหาจาก RegExp ตรงๆ ไม่เจอ ให้ลองกวาดหาจาก Label
-                        const allBoxes = targetSection.locator('._bet-box_1ckm8_45, [class*="_bet-box_"]');
-                        const boxCount = await allBoxes.count();
-                        for (let j = 0; j < boxCount; j++) {
-                            const label = await allBoxes.nth(j).locator('._bet-label_1ckm8_65, [class*="_bet-label_"]').innerText().catch(() => "");
-                            if (this.isLineMatch(cleanTarget, label)) {
-                                targetBox = allBoxes.nth(j);
-                                break;
-                            }
+
+                    // 1. ค้นหาจาก Label โดยตรง (เร็วกว่าการสแกนทุก Element)
+                    const allLabels = targetSection.locator('._bet-label_1ckm8_65, [class*="_bet-label_"]');
+                    const labelCount = await allLabels.count();
+                    
+                    for (let j = 0; j < labelCount; j++) {
+                        const labelText = await allLabels.nth(j).innerText().catch(() => "");
+                        if (this.isLineMatch(cleanTarget, labelText)) {
+                            // เมื่อเจอ Label ที่ใช่ ให้หา Bet Box ที่ครอบมันอยู่
+                            targetBox = allLabels.nth(j).locator('xpath=ancestor::div[contains(@class, "_bet-box_")]').first();
+                            break;
                         }
                     }
 
                     if (targetBox) {
                         botLog(`[AUTO-BOT] 🎯 Found matching price! Clicking...`);
                         await targetBox.click({ force: true });
-                        await page.waitForTimeout(1500); // รอให้ราคาเข้าตะกร้า
+                        await page.waitForTimeout(2000); // หน่วงเวลา 2 วินาที
 
-                        // 3. คลิกไอคอนตะกร้า (Floating Cart Icon)
-                        botLog(`[AUTO-BOT] 🛒 Opening Bet Slip...`);
+                        botLog(`[AUTO-BOT] 🛒 Checking if Bet Slip is already open...`);
+                        const amountInput = page.locator('._option_wlp6f_80, ._stake-container_15log_45, ._container_15log_69, .ui-input__input').first();
                         const cartIcon = page.locator('[class*="sport-bet-cart-classname"], [class*="_bet-cart_"], i[data-src*="icon_ty_floatbtn.svg"]').first();
-                        
-                        if (await cartIcon.isVisible()) {
-                            await cartIcon.click({ force: true });
-                            await page.waitForTimeout(1500);
-                            botLog(`[AUTO-BOT] ✅ Bet Slip opened. Ready for amount entry.`);
-                        } else {
-                            botLog(`[AUTO-BOT] ⚠️ Cart icon not found. It might be already open or hidden.`);
+
+                        // 1.5 ลบเลเยอร์บังหน้าก่อนคลิกตระกร้า
+                        await page.evaluate(() => {
+                            document.querySelectorAll('.ui-mask, .ui-overlay, ._mask_').forEach(el => el.remove());
+                        }).catch(() => {});
+
+                        // ถ้ายังไม่เห็นช่องใส่เงิน ให้ลองเปิดตระกร้า
+                        if (!(await amountInput.isVisible())) {
+                            if (await cartIcon.isVisible()) {
+                                botLog(`[AUTO-BOT] 🖱️ Slip not open, clicking cart icon...`);
+                                // ลองคลิก 2 วิธี: Selector และ พิกัด (เผื่อโดนบัง)
+                                await cartIcon.evaluate((el: HTMLElement) => el.click()).catch(() => {});
+                                await page.waitForTimeout(500);
+                                
+                                // ถ้ายังไม่เปิด ลองคลิกที่พิกัด (ตระกร้าสีเหลืองมักอยู่ขวาล่าง)
+                                const box = await cartIcon.boundingBox();
+                                if (box) {
+                                    await page.mouse.click(box.x + box.width/2, box.y + box.height/2);
+                                }
+                                await page.waitForTimeout(2000); 
+                            }
                         }
+
+                        // รอให้ช่องใส่เงินปรากฏ (ขยาย Selector ให้ครอบคลุมมากขึ้น)
+                        const slipInput = page.locator(`
+                            ._option_wlp6f_80, 
+                            ._stake-container_15log_45, 
+                            ._container_15log_69, 
+                            .ui-input__input,
+                            [class*="stake-input"],
+                            [class*="amount-input"],
+                            div[role="textbox"]
+                        `).first();
+
+                        await slipInput.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+
+                        if (await slipInput.isVisible()) {
+                            botLog(`[AUTO-BOT] ✅ Bet Slip opened. Starting amount entry...`);
+                            await slipInput.click({ force: true });
+                            await page.waitForTimeout(1500); 
+
+                            // 2. กดเลข 1 และเลข 0 บน Keypad
+                            botLog(`[AUTO-BOT] 🔢 Typing "1" and "0" via keypad...`);
+                            const key1 = page.locator('button, div, span').filter({ hasText: /^1$/ }).first();
+                            const key0 = page.locator('button, div, span').filter({ hasText: /^0$/ }).first();
+
+                            if (await key1.isVisible()) {
+                                await key1.click({ force: true });
+                                await page.waitForTimeout(800);
+                                if (await key0.isVisible()) {
+                                    await key0.click({ force: true });
+                                    await page.waitForTimeout(1000);
+                                }
+                            } else {
+                                botLog(`[AUTO-BOT] ⚠️ Keypad not found, trying manual type...`);
+                                await page.keyboard.type("10");
+                                await page.waitForTimeout(1000);
+                            }
+                            
+                            await page.waitForTimeout(1500); 
+
+                            // 3. คลิกปุ่ม "พนัน" (Confirm Bet)
+                            let betBtn: any = null;
+                            botLog(`[AUTO-BOT] 🔍 Searching for "Bet" (พนัน) button...`);
+                            
+                            for (let r = 0; r < 10; r++) {
+                                const btn = page.locator('button, div, span').filter({ hasText: /^พนัน/ }).first();
+                                if (await btn.isVisible()) {
+                                    betBtn = btn;
+                                    break;
+                                }
+                                await page.waitForTimeout(500);
+                            }
+
+                            if (betBtn) {
+                                botLog(`[AUTO-BOT] 🚀 Clicking "Bet" (พนัน) button...`);
+                                await betBtn.click({ force: true }).catch(async () => {
+                                    await betBtn.evaluate((el: HTMLElement) => el.click());
+                                });
+                                
+                                botLog(`[AUTO-BOT] ⏳ Waiting for bet confirmation...`);
+                                await page.waitForTimeout(4000); 
+                                botLog(`[AUTO-BOT] ✅ Betting process completed!`);
+                            } else {
+                                botLog(`[AUTO-BOT] ⚠️ Bet button (พนัน) not found. Closing cart...`);
+                                await cartIcon.evaluate((el: HTMLElement) => el.click()).catch(() => {});
+                            }
+                        } else {
+                            botLog(`[AUTO-BOT] ⚠️ Amount input field not found after waiting.`);
+                        }
+
+                        // 6. ทำความสะอาดและกลับหน้าหลัก
+                        await this.cleanupAndGoBack(page);
+
                     } else {
-                        botLog(`[AUTO-BOT] ❌ Could not find price button for "${cleanTarget}" in ${sectionTitle}`);
+                        botLog(`[AUTO-BOT] ❌ Price not found. Cleaning up...`);
+                        await this.cleanupAndGoBack(page);
                     }
                 } else {
-                    botLog(`[AUTO-BOT] ❌ Section "${sectionTitle}" not found on this page.`);
+                    botLog(`[AUTO-BOT] ❌ Section "${sectionTitle}" not found. Cleaning up...`);
+                    await this.cleanupAndGoBack(page);
                 }
             } catch (e: any) {
                 botLog(`[AUTO-BOT] ⚠️ Error during price/cart selection: ${e.message}`);
+                await this.cleanupAndGoBack(page);
             }
 
-            // สั่ง Pause ตัวเองเสมอหลังจากทำภารกิจเสร็จ
-            this.setReady(false);
+            // สั่ง Pause ตัวเองเสมอหลังจากทำภารกิจเสร็จ (ถูกปิดใช้งานตามคำขอ)
+            // this.setReady(false);
         } else {
             botLog(`[AUTO-BOT] ❌ Navigation failed. Still on Search Page.`);
+            // พยายามล้างช่องค้นหาเพื่อเริ่มใหม่
+            const clearBtn = page.locator('.ui-input__clear').first();
+            if (await clearBtn.isVisible()) await clearBtn.click({ force: true }).catch(() => {});
+            // this.setReady(false);
         }
       } else {
-        botLog(`[AUTO-BOT] ❌ Could not find match row in search results for "${homeKey}" vs "${awayKey}"`);
+        botLog(`[AUTO-BOT] ❌ Could not find match row in search results for "${homeKey}" vs "${awayKey}" after 5s.`);
+        await this.cleanupAndGoBack(page);
+        // this.setReady(false); // หยุด Auto-bot
       }
 
     } catch (error: any) {
@@ -253,6 +353,72 @@ export class BrowserService {
     } finally {
       this.isProcessing = false;
     }
+  }
+
+  // ฟังก์ชันช่วยย้อนกลับและปิด Popup (รองรับ Popup โบนัสและวงล้อ)
+  private static async cleanupAndGoBack(page: Page) {
+    botLog(`[AUTO-BOT] 🔙 Returning to search results/main page...`);
+    
+    // 0. ลบเลเยอร์ที่บังปุ่มออก (ถ้ามี)
+    await page.evaluate(() => {
+        document.querySelectorAll('.ui-mask, .ui-overlay, ._mask_').forEach(el => el.remove());
+    }).catch(() => {});
+
+    // 1. คลิกลูกศรมุมบนซ้าย (Back Button) - ลองหลายวิธี
+    // ใช้รหัสสัญลักษณ์ #ui-arrow-418a3a ที่พบใน HTML
+    const backBtn = page.locator('.lobby-base-header__back, .ui-arrow--left, [xlink\\:href="#ui-arrow-418a3a"]').first();
+    
+    try {
+        if (await backBtn.isVisible()) {
+            botLog(`[AUTO-BOT] 🖱️ Clicking Back button...`);
+            await backBtn.click({ force: true, timeout: 2000 }).catch(async () => {
+                // ถ้าคลิกธรรมดาไม่ติด ให้คลิกด้วยพิกัด (Fallback)
+                await page.mouse.click(25, 20);
+            });
+        } else {
+            botLog(`[AUTO-BOT] ⚠️ Back button not visible, using Coordinate Click & Browser Back...`);
+            await page.mouse.click(25, 20).catch(() => {});
+            await page.evaluate(() => window.history.back()).catch(() => {});
+        }
+    } catch (e) {
+        await page.evaluate(() => window.history.back()).catch(() => {});
+    }
+    
+    // รอให้หน้าจอเปลี่ยนและ Popup เริ่มโหลด
+    await page.waitForTimeout(2500);
+
+    // 2. ปิด Popup ถ้ามี (ทำ 2 รอบ)
+    botLog(`[AUTO-BOT] ✖️ Checking for popups (2 rounds)...`);
+    for (let i = 0; i < 2; i++) {
+        // ค้นหาจากสัญลักษณ์ปุ่ม X เฉพาะเจาะจง (#ui-close-059120, #ui-dialog-close-088f02)
+        const closeBtn = page.locator(`
+            [xlink\\:href="#ui-close-059120"],
+            [xlink\\:href="#ui-dialog-close-088f02"],
+            .ui-dialog-close-box__icon, 
+            .ui-dialog-close-box, 
+            ._close-icon_,
+            [class*="close-box"]
+        `).first();
+        
+        try {
+            await closeBtn.waitFor({ state: 'visible', timeout: 2000 });
+            botLog(`[AUTO-BOT] ✖️ Popup detected. Closing round ${i+1}...`);
+            await closeBtn.click({ force: true }).catch(() => {});
+            await page.waitForTimeout(2000); 
+        } catch (e) {
+            // ลองเช็คปุ่ม X ทั่วไป
+            const svgClose = page.locator('svg, i, div').filter({ hasText: /^x$/i }).first();
+            if (await svgClose.isVisible()) {
+                botLog(`[AUTO-BOT] ✖️ Finding generic X button...`);
+                await svgClose.click({ force: true }).catch(() => {});
+                await page.waitForTimeout(2000);
+            } else {
+                botLog(`[AUTO-BOT] 💤 No popup detected in round ${i+1}.`);
+            }
+        }
+    }
+    
+    botLog(`[AUTO-BOT] 🏁 Navigation cleanup finished. Ready for next task.`);
   }
 
   static async findAndBet(leagueName: string, matchName: string, betSide: string, amount: number, targetLine?: string) {
