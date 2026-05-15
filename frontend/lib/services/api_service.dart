@@ -3,23 +3,61 @@ import 'package:http/http.dart' as http;
 import '../models/football_models.dart';
 
 class ApiService {
-  static const String baseUrl = 'http://localhost:3000'; // Update with VPS IP if needed
+  static const String baseUrl = 'http://localhost:3000';
 
   static Future<List<FootballMatch>> getMatches() async {
     final response = await http.get(Uri.parse('$baseUrl/matches'));
     if (response.statusCode == 200) {
-      List data = json.decode(response.body);
-      return data.map((m) => FootballMatch.fromJson(m)).toList();
+      List jsonResponse = json.decode(response.body);
+      return jsonResponse.map((data) => FootballMatch.fromJson(data)).toList();
+    } else {
+      throw Exception('Failed to load matches');
     }
-    throw Exception('Failed to load matches');
   }
 
   static Future<List<Signal>> getSignals() async {
     final response = await http.get(Uri.parse('$baseUrl/signals'));
     if (response.statusCode == 200) {
-      List data = json.decode(response.body);
-      return data.map((s) => Signal.fromJson(s)).toList();
+      List jsonResponse = json.decode(response.body);
+      return jsonResponse.map((data) => Signal.fromJson(data)).toList();
+    } else {
+      throw Exception('Failed to load signals');
     }
-    throw Exception('Failed to load signals');
+  }
+
+  static Future<List<Bet>> getLatestBets() async {
+    final response = await http.get(Uri.parse('$baseUrl/bets'));
+    if (response.statusCode == 200) {
+      List jsonResponse = json.decode(response.body);
+      return jsonResponse.map((data) => Bet.fromJson(data)).toList();
+    } else {
+      throw Exception('Failed to load bets');
+    }
+  }
+
+  static Future<List<Bet>> getBetHistory() async {
+    final response = await http.get(Uri.parse('$baseUrl/bets/history'));
+    if (response.statusCode == 200) {
+      List jsonResponse = json.decode(response.body);
+      return jsonResponse.map((data) => Bet.fromJson(data)).toList();
+    } else {
+      throw Exception('Failed to load bet history');
+    }
+  }
+
+  static Future<bool> getBrowserStatus() async {
+    final response = await http.get(Uri.parse('$baseUrl/browser/status'));
+    if (response.statusCode == 200) {
+      return json.decode(response.body)['isReady'];
+    }
+    return false;
+  }
+
+  static Future<void> setBrowserReady(bool ready) async {
+    await http.post(
+      Uri.parse('$baseUrl/browser/ready'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({'ready': ready}),
+    );
   }
 }

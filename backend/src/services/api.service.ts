@@ -17,13 +17,13 @@ export class ApiService {
   private static payload = {
     "languageType": "THA",
     "current": 1,
-    "size": 50, // Increased size to get more matches
+    "size": 150, // Increased size to get ALL live matches
     "oddsType": 1,
     "orderBy": 0,
     "sportId": 1,
     "isPC": false,
-    "type": 1,
-    "sportTypes": [1, 2]
+    "type": 1, // 1 = Live matches only (matches the "Live betting" count on web)
+    "sportTypes": [1] 
   };
 
   static async fetchMatches(): Promise<ApiResponse> {
@@ -31,6 +31,17 @@ export class ApiService {
       const response = await axios.post<ApiResponse>(API_URL, this.payload, {
         headers: this.headers,
       });
+      
+      const records = response.data?.data?.records || [];
+      const totalAvailable = response.data?.data?.total || 0;
+
+      // กรองบอลจริง (sid 1)
+      const realSoccer = records.filter(r => r.sid === 1);
+      // กรองบอลเสมือน (sid 177)
+      const virtualSoccer = records.filter(r => r.sid === 177);
+      
+      console.log(`[API] Web Live Count: ${totalAvailable} | Real Soccer: ${realSoccer.length} | Virtual: ${virtualSoccer.length}`);
+      
       return response.data;
     } catch (error) {
       console.error('Error fetching matches:', error);

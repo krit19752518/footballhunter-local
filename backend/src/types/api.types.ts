@@ -1,46 +1,47 @@
 export interface ApiMatchRecord {
   id: number;
-  nm: string; // Match name "Team A vs Team B"
-  lg: {
-    na: string; // League name
+  sid: number; // Sport ID (1 = Soccer)
+  nm: string; 
+  lg: { // League
+    na: string;
     id: number;
   };
-  ts: {
-    na: string; // Team name
+  ts: { // Teams
+    na: string;
     id: number;
   }[];
   nsg: {
     tyg: number;
-    sc: number[]; // [HomeScore, AwayScore]
+    sc: number[];
   }[];
   mg: MarketGroup[];
-  bt: number; // Start time timestamp
+  st: number; // Start time
   mc: {
-    s: number; // Match time in seconds or status?
+    s: number; // Seconds
+    tp: number; // Period (100 = Finished)
   };
 }
 
 export interface MarketGroup {
-  nm: string; // "แฮนดิแคป", "สูง/ต่ำ", "1x2"
-  mks: Market[];
+  mty: number; // 1000=HDP, 1007=OU
+  mks: Market[]; 
 }
 
 export interface Market {
   id: number;
+  li?: string; // Line description "0.5"
   op: Option[];
-  li?: string; // Line e.g. "0.5"
 }
 
 export interface Option {
-  na: string; // Option name
-  nm: string; // Line display
-  od: number; // Odds
-  ty: number; // Type ID
+  ty: number; // 1=Home, 2=Away, 4=Over, 5=Under
+  od: number; // Odds value
 }
 
 export interface ApiResponse {
   success: boolean;
   data: {
+    total: number;
     records: ApiMatchRecord[];
   };
 }

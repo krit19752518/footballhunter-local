@@ -7,7 +7,8 @@ class FootballMatch {
   final DateTime startTime;
   final int scoreHome;
   final int scoreAway;
-  final String status;
+  final String? status;
+  final String? matchTime;
   final List<Odds> odds;
 
   FootballMatch({
@@ -19,27 +20,30 @@ class FootballMatch {
     required this.startTime,
     required this.scoreHome,
     required this.scoreAway,
-    required this.status,
-    required this.odds,
+    this.status,
+    this.matchTime,
+    this.odds = const [],
   });
 
   factory FootballMatch.fromJson(Map<String, dynamic> json) {
     return FootballMatch(
       id: json['id'],
       name: json['name'],
-      leagueName: json['leagueName'],
+      leagueName: json['leagueName'] ?? 'Unknown League',
       homeTeam: json['homeTeam'],
       awayTeam: json['awayTeam'],
       startTime: DateTime.parse(json['startTime']),
       scoreHome: json['scoreHome'],
       scoreAway: json['scoreAway'],
-      status: json['status'] ?? 'Unknown',
-      odds: (json['odds'] as List? ?? []).map((o) => Odds.fromJson(o)).toList(),
+      status: json['status'],
+      matchTime: json['matchTime'],
+      odds: (json['odds'] as List?)?.map((i) => Odds.fromJson(i)).toList() ?? [],
     );
   }
 }
 
 class Odds {
+  final String id;
   final String type;
   final String? line;
   final double? homeOdds;
@@ -48,6 +52,7 @@ class Odds {
   final double? underOdds;
 
   Odds({
+    required this.id,
     required this.type,
     this.line,
     this.homeOdds,
@@ -58,6 +63,7 @@ class Odds {
 
   factory Odds.fromJson(Map<String, dynamic> json) {
     return Odds(
+      id: json['id'],
       type: json['type'],
       line: json['line'],
       homeOdds: json['homeOdds']?.toDouble(),
@@ -70,32 +76,90 @@ class Odds {
 
 class Signal {
   final String id;
-  final int matchId;
   final String logicType;
   final String message;
   final DateTime createdAt;
+  final String? matchTimeAtSignal; // เพิ่มส่วนนี้
   final bool? isWon;
   final FootballMatch? match;
 
   Signal({
     required this.id,
-    required this.matchId,
     required this.logicType,
     required this.message,
     required this.createdAt,
+    this.matchTimeAtSignal,
     this.isWon,
     this.match,
+    this.period,
   });
+
+  final String? period;
 
   factory Signal.fromJson(Map<String, dynamic> json) {
     return Signal(
       id: json['id'],
-      matchId: json['matchId'],
       logicType: json['logicType'],
       message: json['message'],
       createdAt: DateTime.parse(json['createdAt']),
+      matchTimeAtSignal: json['matchTimeAtSignal'],
       isWon: json['isWon'],
       match: json['match'] != null ? FootballMatch.fromJson(json['match']) : null,
+      period: json['period'],
+    );
+  }
+}
+
+class Bet {
+  final String id;
+  final String signalId;
+  final int matchId;
+  final double amount;
+  final double? oddsAtBet;
+  final String? lineAtBet;
+  final String status;
+  final double? netProfit;
+  final DateTime createdAt;
+  final String? betSide;
+  final String? autoBetStatus;
+  final String? autoBetError;
+  final Signal? signal;
+
+  Bet({
+    required this.id,
+    required this.signalId,
+    required this.matchId,
+    required this.amount,
+    this.oddsAtBet,
+    this.lineAtBet,
+    required this.status,
+    this.netProfit,
+    required this.createdAt,
+    this.betSide,
+    this.autoBetStatus,
+    this.autoBetError,
+    this.signal,
+    this.period,
+  });
+
+  final String? period;
+
+  factory Bet.fromJson(Map<String, dynamic> json) {
+    return Bet(
+      id: json['id'],
+      signalId: json['signalId'],
+      matchId: json['matchId'],
+      amount: json['amount'].toDouble(),
+      oddsAtBet: json['oddsAtBet']?.toDouble(),
+      lineAtBet: json['lineAtBet'],
+      status: json['status'],
+      netProfit: json['netProfit']?.toDouble(),
+      createdAt: DateTime.parse(json['createdAt']),
+      betSide: json['betSide'],
+      autoBetStatus: json['autoBetStatus'],
+      autoBetError: json['autoBetError'],
+      signal: json['signal'] != null ? Signal.fromJson(json['signal']) : null,
+      period: json['period'],
     );
   }
 }

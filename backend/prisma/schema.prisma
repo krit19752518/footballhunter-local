@@ -16,6 +16,9 @@ model Match {
   scoreHome   Int      @default(0)
   scoreAway   Int      @default(0)
   status      String?  
+  matchTime   String?  
+  scoreHomeHT Int      @default(0)
+  scoreAwayHT Int      @default(0)
   updatedAt   DateTime @updatedAt
   odds        Odds[]
   signals     Signal[]
@@ -51,12 +54,47 @@ model OddsHistory {
 }
 
 model Signal {
-  id          String   @id @default(cuid())
-  matchId     Int
-  match       Match    @relation(fields: [matchId], references: [id])
-  logicType   String   
-  message     String
-  value       String?  
-  createdAt   DateTime @default(now())
-  isWon       Boolean? 
+  id                String   @id @default(cuid())
+  matchId           Int
+  match             Match    @relation(fields: [matchId], references: [id])
+  logicType         String   
+  message           String
+  matchTimeAtSignal String?  // เพิ่มฟิลด์นี้เพื่อเก็บนาทีตอนแจ้งเตือน
+  value             String?  
+  period            String   @default("FT") // FH (First Half), FT (Full Time)
+  createdAt         DateTime @default(now())
+  isWon             Boolean? 
+  bet               Bet?
+}
+
+model Bet {
+  id            String   @id @default(cuid())
+  signalId      String   @unique
+  signal        Signal   @relation(fields: [signalId], references: [id])
+  matchId       Int
+  amount        Float    @default(100)
+  oddsAtBet     Float?   
+  lineAtBet     String?  
+  betSide       String?  
+  status        String   @default("Pending") // Pending, Won, Lost, Draw
+  autoBetStatus String   @default("Not Attempted") // Not Attempted, Executed, Failed, Paused
+  autoBetError  String?  
+  netProfit     Float?   
+  period        String   @default("FT") // FH (First Half), FT (Full Time)
+  createdAt     DateTime @default(now())
+  settledAt     DateTime?
+}
+
+model RealBetLog {
+  id            String   @id @default(cuid())
+  signalId      String?
+  matchName     String
+  leagueName    String
+  betSide       String
+  oddsAtBet     Float?
+  lineAtBet     String?
+  amount        Float?
+  status        String   @default("Executed") // Executed, Failed
+  errorMessage  String?
+  createdAt     DateTime @default(now())
 }

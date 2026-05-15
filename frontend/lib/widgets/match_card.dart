@@ -7,29 +7,70 @@ class MatchCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(match.leagueName, style: const TextStyle(fontSize: 12, color: Colors.blueAccent)),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                Expanded(child: Text(match.homeTeam, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold))),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                  child: Text('${match.scoreHome} - ${match.scoreAway}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Colors.amber)),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  match.leagueName,
+                  style: const TextStyle(fontSize: 10, color: Colors.white38),
+                  overflow: TextOverflow.ellipsis,
                 ),
-                Expanded(child: Text(match.awayTeam, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold))),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(match.status, style: const TextStyle(fontSize: 12, color: Colors.greenAccent)),
-          ],
-        ),
+              ),
+              if (match.status == 'Live')
+                Row(
+                  children: [
+                    if (match.matchTime != null)
+                      Text(
+                        "${match.matchTime}' ",
+                        style: const TextStyle(fontSize: 10, color: Colors.greenAccent, fontWeight: FontWeight.bold),
+                      ),
+                    const Icon(Icons.circle, size: 8, color: Colors.greenAccent),
+                  ],
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  match.homeTeam,
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.right,
+                ),
+              ),
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.black26,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  '${match.scoreHome} - ${match.scoreAway}',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.yellowAccent),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  match.awayTeam,
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.left,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
