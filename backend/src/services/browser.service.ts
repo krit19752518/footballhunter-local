@@ -1,5 +1,6 @@
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
-import { botLog, testBotLog } from '../lib/logger';
+import { botLog, testBotLog, testLogFile } from '../lib/logger';
+import fs from 'fs';
 import prisma from '../lib/prisma';
 
 export class BrowserService {
@@ -14,6 +15,30 @@ export class BrowserService {
   private static isTestRunning: boolean = false; // สำหรับเลือกไฟล์ Log
   private static nextStepResolver: (() => void) | null = null;
   private static stopTestRequested: boolean = false;
+
+  static isQueueEmpty() {
+    return this.queue.length === 0 && !this.isTestRunning;
+  }
+
+  static getIsTestRunning() {
+    return this.isTestRunning;
+  }
+
+  static clearQueue() {
+    this.queue = [];
+    this.stopTest();
+  }
+
+  static getTestLogs(lines: number = 30): string[] {
+    try {
+      if (!fs.existsSync(testLogFile)) return [];
+      const content = fs.readFileSync(testLogFile, 'utf8');
+      const allLines = content.split('\n').filter((l: string) => l.trim() !== '');
+      return allLines.slice(-lines);
+    } catch (e) {
+      return [`Error reading logs: ${e}`];
+    }
+  }
 
   private static smartLog(message: string, forcedIsTest?: boolean) {
     if (forcedIsTest === true || (forcedIsTest === undefined && this.isTestRunning)) {
@@ -48,6 +73,35 @@ export class BrowserService {
         this.nextStepResolver = null;
     }
     this.smartLog(`[STOP-TEST] 🛑 คำสั่งหยุดการทดสอบได้รับแล้ว.`);
+  }
+
+  static formatLine(line: string | number): string {
+    if (line === undefined || line === null || line === "") return "0";
+    
+    // จัดการเครื่องหมายนำหน้า
+    let prefix = "";
+    let lineStr = line.toString().trim();
+    if (lineStr.startsWith("+")) {
+      prefix = "+";
+      lineStr = lineStr.substring(1);
+    } else if (lineStr.startsWith("-")) {
+      prefix = "-";
+      lineStr = lineStr.substring(1);
+    }
+
+    const num = parseFloat(lineStr);
+    if (isNaN(num)) return line.toString();
+
+    // กรณีเป็นเลขควบ (ลงท้ายด้วย .25 หรือ .75)
+    if (num % 1 === 0.25) {
+      const base = Math.floor(num);
+      return `${prefix}${base}/${base + 0.5}`;
+    } else if (num % 1 === 0.75) {
+      const base = Math.floor(num);
+      return `${prefix}${base + 0.5}/${base + 1}`;
+    }
+
+    return prefix + num.toString();
   }
 
   static async init() {
@@ -138,10 +192,15 @@ export class BrowserService {
       this.isProcessing = true;
       this.isTestRunning = !!isTest;
       this.stopTestRequested = false;
-      try {
-        this.smartLog(`[AUTO-BOT] 🚀 Starting ${this.isTestRunning ? 'TEST' : 'REAL'} process for: ${matchName}`);
+      let step = 1;
+      const logWithStep = (msg: string) => {
+        this.smartLog(`[Step ${step++}] ${msg}`, isTest);
+      };
 
-        if (this.isTestRunning) await this.waitStep("เริ่มต้นการทำงาน");
+      try {
+        logWithStep(`🚀 Starting ${this.isTestRunning ? 'TEST' : 'REAL'} process for: ${matchName}`);
+
+        // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
         if (this.stopTestRequested) throw new Error("Test Stopped by user");
 
       // 1. เตรียมชื่อทีมสำหรับค้นหา
@@ -163,17 +222,18 @@ export class BrowserService {
 
       // 2. ค้นหาด้วยชื่อลีกก่อน
       try {
+        logWithStep(`🔍 Opening search tool for league: ${leagueName}`);
         await this.performSearch(page, leagueName);
-        if (this.isTestRunning) await this.waitStep("หลังค้นหาเสร็จ (กำลังจะหาคู่บอล)");
+        // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
         if (this.stopTestRequested) throw new Error("Test Stopped by user");
         await page.waitForTimeout(2000); // ให้เวลาผลลัพธ์โหลด
       } catch (e: any) {
-        this.smartLog(`[AUTO-BOT] ❌ League Search Failed: ${e.message}`);
+        logWithStep(`❌ League Search Failed: ${e.message}`);
         return;
       }
 
       // 3. ค้นหาคู่บอลในผลลัพธ์ที่ปรากฏ (รอสูงสุด 5 วินาที)
-      this.smartLog(`[AUTO-BOT] 🔍 Scanning for match: ${homeKey} vs ${awayKey}`);
+      logWithStep(`🔍 Scanning for match: ${homeKey} vs ${awayKey}`);
       let matchRow: any = null;
       let found = false;
 
@@ -198,8 +258,8 @@ export class BrowserService {
       }
 
       if (matchRow) {
-        this.smartLog(`[AUTO-BOT] ✅ Match found! Clicking to open odds page...`);
-        if (this.isTestRunning) await this.waitStep("พบคู่บอล (กำลังจะคลิกเข้าไปดูราคา)");
+        logWithStep(`✅ Match found! Clicking to open odds page...`);
+        // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
         if (this.stopTestRequested) throw new Error("Test Stopped by user");
         await matchRow.scrollIntoViewIfNeeded().catch(() => {});
         await page.waitForTimeout(2000); // หน่วงเวลา 2 วินาทีตามขอ
@@ -224,15 +284,16 @@ export class BrowserService {
             await page.waitForTimeout(1000); // หน่วงเวลาเช็คหน้าเปลี่ยน
             // ถ้ายังไม่เปลี่ยนหน้า ลองใช้ JS Click ซ้ำที่ตัวแถว
             if (i === 5) {
-                this.smartLog(`[AUTO-BOT] ⚠️ Not moved yet, trying JS click fallback...`);
+                logWithStep(`[AUTO-BOT] ⚠️ Not moved yet, trying JS click fallback...`);
                 await matchRow.evaluate((el: HTMLElement) => el.click()).catch(() => {});
             }
         }
 
         if (arrived) {
-            this.smartLog(`[AUTO-BOT] 🚩 Arrived at Odds Page. Waiting 3s for stabilization...`);
+            logWithStep(`🚩 Arrived at Odds Page. Waiting 3s for stabilization...`);
             await page.waitForTimeout(3000); // รอให้ราคาและหน้าจอรีเฟรชจนนิ่ง
-            this.smartLog(`[AUTO-BOT] 🔍 Searching for price: ${targetLine}`);
+            const formattedPrice = BrowserService.formatLine(targetLine || "0");
+            logWithStep(`🔍 Searching for price: ${formattedPrice}`);
             
             // 1. ระบุชื่อหัวข้อ Section ที่ต้องการ
             const isFH = betSide.includes('ครึ่งแรก') || task.matchName.includes('ครึ่งแรก') || (targetLine && targetLine.includes('ครึ่งแรก'));
@@ -241,7 +302,7 @@ export class BrowserService {
             let sectionTitle = isOU ? 'สูง/ต่ำ' : 'แฮนดิแคป';
             if (isFH) sectionTitle += '-ครึ่งแรก';
 
-            this.smartLog(`[AUTO-BOT] 🔍 Looking for Section: "${sectionTitle}"`);
+            logWithStep(`🔍 Looking for Section: "${sectionTitle}"`);
 
             // 2. ค้นหา Section และคลิกเลือกราคา
             try {
@@ -266,34 +327,59 @@ export class BrowserService {
                 }
 
                 if (targetSection) {
-                    this.smartLog(`[AUTO-BOT] ✅ Found Section: ${sectionTitle}`);
-                    if (this.isTestRunning) await this.waitStep(`พบ Section ${sectionTitle} (กำลังจะหาตำแหน่งราคา ${targetLine})`);
+                    logWithStep(`✅ Found Section: ${sectionTitle}`);
+                    const formattedPrice = BrowserService.formatLine(targetLine || "0");
+                    // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
                     if (this.stopTestRequested) throw new Error("Test Stopped by user");
                     
                     const cleanTarget = (targetLine || "").replace(/[\[\]]/g, '').trim();
                     let targetBox: any = null;
 
-                    // 1. ค้นหาจาก Label โดยตรง (เร็วกว่าการสแกนทุก Element)
+                    // --- ระบบแยกฝั่ง (Home/Away Awareness) ---
+                    const homeTeam = task.matchName.split(' vs ')[0];
+                    const awayTeam = task.matchName.split(' vs ')[1];
+                    const isAwayBet = betSide.includes(awayTeam) || betSide.includes('ทีมเยือน');
+                    
+                    logWithStep(`🎯 Targeting ${isAwayBet ? 'AWAY' : 'HOME'} side for price ${formattedPrice}`);
+
                     const allLabels = targetSection.locator('._bet-label_1ckm8_65, [class*="_bet-label_"]');
                     const labelCount = await allLabels.count();
                     
+                    // ใน AH/OU มักจะมี 2 คอลัมน์ (0=Home, 1=Away) หรือ (0=Over, 1=Under)
+                    // เราจะวนหาตัวที่ตรงทั้งราคาและ "ฝั่ง"
                     for (let j = 0; j < labelCount; j++) {
                         const labelText = await allLabels.nth(j).innerText().catch(() => "");
                         if (this.isLineMatch(cleanTarget, labelText)) {
-                            // เมื่อเจอ Label ที่ใช่ ให้หา Bet Box ที่ครอบมันอยู่
-                            targetBox = allLabels.nth(j).locator('xpath=ancestor::div[contains(@class, "_bet-box_")]').first();
-                            break;
+                            // เช็คฝั่ง: AH มักมี 2 label ต่อแถว. j % 2 === 0 คือซ้าย (Home), j % 2 === 1 คือขวา (Away)
+                            const currentIsAway = (j % 2 === 1);
+                            
+                            // ถ้าฝั่งตรงกับที่ต้องการ หรือถ้าหาไม่เจอจริงๆ (กรณีมีคอลัมน์เดียว) ให้เลือกตัวนี้
+                            if (currentIsAway === isAwayBet || labelCount === 1) {
+                                targetBox = allLabels.nth(j).locator('xpath=ancestor::div[contains(@class, "_bet-box_")]').first();
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Fallback: ถ้าหาแบบเช็คฝั่งไม่เจอ ให้เอาตัวที่ราคาตรงตัวแรก (กันเหนียว)
+                    if (!targetBox) {
+                        for (let j = 0; j < labelCount; j++) {
+                            const labelText = await allLabels.nth(j).innerText().catch(() => "");
+                            if (this.isLineMatch(cleanTarget, labelText)) {
+                                targetBox = allLabels.nth(j).locator('xpath=ancestor::div[contains(@class, "_bet-box_")]').first();
+                                break;
+                            }
                         }
                     }
 
                     if (targetBox) {
-                        this.smartLog(`[AUTO-BOT] 🎯 Found matching price! Clicking...`);
-                        if (this.isTestRunning) await this.waitStep("พบราคาที่ต้องการ (กำลังจะคลิกเลือกราคา)");
+                        logWithStep(`[AUTO-BOT] 🎯 Found matching price! Clicking...`);
+                        // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
                         if (this.stopTestRequested) throw new Error("Test Stopped by user");
                         await targetBox.click({ force: true });
                         await page.waitForTimeout(2000); // หน่วงเวลา 2 วินาที
 
-                        this.smartLog(`[AUTO-BOT] 🛒 Checking if Bet Slip is already open...`);
+                        logWithStep(`[AUTO-BOT] 🛒 Checking if Bet Slip is already open...`);
                         const amountInput = page.locator('._option_wlp6f_80, ._stake-container_15log_45, ._container_15log_69, .ui-input__input').first();
                         
                         // ปรับปรุง Selector ตระกร้าให้ครอบคลุมขึ้น
@@ -313,14 +399,14 @@ export class BrowserService {
 
                         // ถ้ายังไม่เห็นช่องใส่เงิน ให้ลองเปิดตระกร้า
                         if (!(await amountInput.isVisible())) {
-                            this.smartLog(`[AUTO-BOT] 🔍 Waiting for cart icon to appear...`);
+                            logWithStep(`🔍 Waiting for cart icon to appear...`);
                             await cartIcon.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
 
                             if (await cartIcon.isVisible()) {
-                                if (this.isTestRunning) await this.waitStep("เห็นปุ่มตระกร้าแล้ว (กำลังจะคลิกเปิด Slip)");
+                                // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
                                 if (this.stopTestRequested) throw new Error("Test Stopped by user");
 
-                                this.smartLog(`[AUTO-BOT] 🖱️ Slip not open, clicking cart icon...`);
+                                logWithStep(`🖱️ Slip not open, clicking cart icon...`);
                                 // ลองคลิกหลายๆ แบบเพื่อให้มั่นใจ
                                 await cartIcon.click({ force: true }).catch(async () => {
                                     await cartIcon.evaluate((el: HTMLElement) => el.click()).catch(() => {});
@@ -332,13 +418,13 @@ export class BrowserService {
                                 if (!(await amountInput.isVisible())) {
                                     const box = await cartIcon.boundingBox();
                                     if (box) {
-                                        this.smartLog(`[AUTO-BOT] 🖱️ Trying coordinate click on cart icon...`);
+                                        logWithStep(`🖱️ Trying coordinate click on cart icon...`);
                                         await page.mouse.click(box.x + box.width/2, box.y + box.height/2);
                                     }
                                 }
                                 await page.waitForTimeout(2000); 
                             } else {
-                                this.smartLog(`[AUTO-BOT] ⚠️ Cart icon not found after waiting.`);
+                                logWithStep(`⚠️ Cart icon not found after waiting.`);
                             }
                         }
 
@@ -357,35 +443,70 @@ export class BrowserService {
                         await slipInput.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
 
                         if (await slipInput.isVisible()) {
-                            this.smartLog(`[AUTO-BOT] ✅ Bet Slip opened. Starting amount entry...`);
+                            logWithStep(`[AUTO-BOT] ✅ Bet Slip opened. Starting amount entry...`);
                             await slipInput.click({ force: true });
                             await page.waitForTimeout(1500); 
 
-                            // 2. กดเลข 1 และเลข 0 บน Keypad
-                            this.smartLog(`[AUTO-BOT] 🔢 Typing "1" and "0" via keypad...`);
-                            const key1 = page.locator('button, div, span').filter({ hasText: /^1$/ }).first();
-                            const key0 = page.locator('button, div, span').filter({ hasText: /^0$/ }).first();
+                            // 2. กดเลข 1 และเลข 0 บน Keyboard/Keypad
+                            logWithStep(`🔢 Typing "1" and "0" via keypad...`);
+                            
+                            // คลิกช่อง Input เพื่อความมั่นใจ
+                            await slipInput.click({ force: true }).catch(() => {});
+                            await page.waitForTimeout(800);
 
-                            if (await key1.isVisible()) {
-                                await key1.click({ force: true });
-                                await page.waitForTimeout(800);
-                                if (await key0.isVisible()) {
-                                    await key0.click({ force: true });
-                                    await page.waitForTimeout(1000);
+                            // หา Container ของคีย์บอร์ด (รองรับทั้ง keypad และ keyboard)
+                            const keypad = page.locator('.van-keypad, .ui-keypad, [class*="keypad"], [class*="keyboard"]').first();
+                            
+                            const getKey = (num: string) => {
+                                // พยายามหาปุ่มที่มีตัวเลขนั้นๆ (เน้นหาจาก ui-button__text หรือ text ตรงๆ)
+                                return keypad.locator('.ui-button__text, .ui-button, span, div, button')
+                                    .filter({ hasText: new RegExp(`^${num}$`) })
+                                    .first();
+                            };
+
+                            try {
+                                if (await keypad.isVisible({ timeout: 3000 })) {
+                                    const btn1 = getKey("1");
+                                    const btn0 = getKey("0");
+                                    
+                                    if (await btn1.isVisible()) {
+                                        await btn1.click({ force: true });
+                                        await page.waitForTimeout(500);
+                                        if (await btn0.isVisible()) {
+                                            await btn0.click({ force: true });
+                                            await page.waitForTimeout(500);
+                                        }
+                                    } else {
+                                        logWithStep(`⚠️ Buttons 1/0 not visible in keyboard, trying manual type...`);
+                                        await page.keyboard.type("10", { delay: 100 });
+                                    }
+                                } else {
+                                    logWithStep(`⚠️ Keyboard container not found, trying manual type...`);
+                                    await page.keyboard.type("10", { delay: 100 });
                                 }
-                            } else {
-                                this.smartLog(`[AUTO-BOT] ⚠️ Keypad not found, trying manual type...`);
-                                await page.keyboard.type("10");
-                                await page.waitForTimeout(1000);
+                            } catch (e) {
+                                logWithStep(`⚠️ Interaction failed, using keyboard fallback: ${e}`);
+                                await page.keyboard.type("10", { delay: 100 });
+                            }
+                            
+                            await page.waitForTimeout(1000); 
+
+                            // ตรวจสอบว่าเงินเข้าไหม (ถ้าหา value ได้)
+                            const currentVal = await slipInput.innerText().catch(() => "");
+                            if (!currentVal.includes("10")) {
+                                logWithStep(`⚠️ Amount not visible in UI, trying keyboard one last time...`);
+                                await slipInput.click({ clickCount: 3 }); // Select all
+                                await page.keyboard.press('Backspace');
+                                await page.keyboard.type("10", { delay: 100 });
                             }
                             
                             // ==========================================
                             // 🛑 DEBUG PAUSE: หยุดหลังกรอกเลข 10
                             // ==========================================
                             if (this.isTestRunning) {
-                                await this.waitStep("กรอกเลข 10 เสร็จแล้ว (กำลังจะเช็คปุ่มแทง)");
+                                // await this.waitStep(...); // Removed for Full-Auto
                             } else {
-                                await page.waitForTimeout(60000);
+                                await page.waitForTimeout(1000);
                             }
                             if (this.stopTestRequested) throw new Error("Test Stopped by user");
                             // ==========================================
@@ -394,69 +515,81 @@ export class BrowserService {
 
                             // 3. คลิกปุ่ม "พนัน" (Confirm Bet)
                             let betBtn: any = null;
-                            this.smartLog(`[AUTO-BOT] 🔍 Searching for "Bet" (พนัน) button...`);
+                            logWithStep(`🔍 Searching for "Bet" (พนัน) button...`);
                             
-                            for (let r = 0; r < 10; r++) {
-                                const btn = page.locator('button, div, span').filter({ hasText: /^พนัน/ }).first();
-                                if (await btn.isVisible()) {
-                                    betBtn = btn;
-                                    break;
-                                }
-                                await page.waitForTimeout(500);
-                            }
+                            for (let r = 0; r < 20; r++) { // เพิ่มเป็น 20 รอบ (ประมาณ 10 วินาที)
+                                 const btn = page.locator('button, div, span').filter({ hasText: /^พนัน/ }).first();
+                                 if (await btn.isVisible()) {
+                                     const isDisabled = await btn.getAttribute('disabled');
+                                     if (isDisabled === null) {
+                                         betBtn = btn;
+                                         break;
+                                     }
+                                 }
+                                 await page.waitForTimeout(500);
+                             }
 
                             if (betBtn) {
-                                this.smartLog(`[AUTO-BOT] 🚀 Clicking "Bet" (พนัน) button...`);
-                                if (this.isTestRunning) await this.waitStep("พบปุ่มพนัน (ขั้นตอนสุดท้าย! กำลังจะคลิกแทง)");
+                                logWithStep(`🚀 Clicking "Bet" (พนัน) button...`);
+                                // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
                                 if (this.stopTestRequested) throw new Error("Test Stopped by user");
                                 await betBtn.click({ force: true }).catch(async () => {
                                     await betBtn.evaluate((el: HTMLElement) => el.click());
                                 });
                                 
-                                this.smartLog(`[AUTO-BOT] ⏳ Waiting for bet confirmation...`);
-                                await page.waitForTimeout(4000); 
-                                this.smartLog(`[AUTO-BOT] ✅ Betting process completed!`);
+                                logWithStep(`⏳ Waiting for bet confirmation (Success Screen)...`);
+                                await page.waitForTimeout(5000); 
+                                logWithStep(`✅ Betting process completed!`);
+                                 // --- ขั้นตอน Cleanup (ปิดหน้าต่างที่เบลอๆ) ---
+                                 logWithStep(`🧹 Cleaning up: Closing success dialog...`);
+                                 await page.evaluate(() => {
+                                     const masks = document.querySelectorAll('.ui-mask, .ui-overlay, ._mask_, .van-overlay');
+                                     masks.forEach((el: any) => { el.click(); setTimeout(() => el.remove(), 500); });
+                                     const event = new MouseEvent('click', { view: window, bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
+                                     document.body.dispatchEvent(event);
+                                 }).catch(() => {});
+                                 await page.waitForTimeout(1500);
                             } else {
-                                this.smartLog(`[AUTO-BOT] ⚠️ Bet button (พนัน) not found. Closing cart...`);
+                                logWithStep(`⚠️ Bet button (พนัน) not found. Closing cart...`);
                                 await cartIcon.evaluate((el: HTMLElement) => el.click()).catch(() => {});
                             }
                         } else {
-                            this.smartLog(`[AUTO-BOT] ⚠️ Amount input field not found after waiting.`);
+                            logWithStep(`[AUTO-BOT] ⚠️ Amount input field not found after waiting.`);
                         }
 
                         // 6. ทำความสะอาดและกลับหน้าหลัก
                         await this.cleanupAndGoBack(page);
 
                     } else {
-                        this.smartLog(`[AUTO-BOT] ❌ Price not found. Cleaning up...`);
+                        logWithStep(`[AUTO-BOT] ❌ Price not found. Cleaning up...`);
                         await this.cleanupAndGoBack(page);
                     }
                 } else {
-                    this.smartLog(`[AUTO-BOT] ❌ Section "${sectionTitle}" not found. Cleaning up...`);
+                    logWithStep(`[AUTO-BOT] ❌ Section "${sectionTitle}" not found. Cleaning up...`);
                     await this.cleanupAndGoBack(page);
                 }
             } catch (e: any) {
-                this.smartLog(`[AUTO-BOT] ⚠️ Error during price/cart selection: ${e.message}`);
+                logWithStep(`[AUTO-BOT] ⚠️ Error during price/cart selection: ${e.message}`);
                 await this.cleanupAndGoBack(page);
             }
 
             // สั่ง Pause ตัวเองเสมอหลังจากทำภารกิจเสร็จ (ถูกปิดใช้งานตามคำขอ)
             // this.setReady(false);
         } else {
-            this.smartLog(`[AUTO-BOT] ❌ Navigation failed. Still on Search Page.`);
+            logWithStep(`[AUTO-BOT] ❌ Navigation failed. Still on Search Page.`);
             // พยายามล้างช่องค้นหาเพื่อเริ่มใหม่
             const clearBtn = page.locator('.ui-input__clear').first();
             if (await clearBtn.isVisible()) await clearBtn.click({ force: true }).catch(() => {});
             // this.setReady(false);
         }
       } else {
-        this.smartLog(`[AUTO-BOT] ❌ Could not find match row in search results for "${homeKey}" vs "${awayKey}" after 5s.`);
+        logWithStep(`[AUTO-BOT] ❌ Could not find match row in search results for "${homeKey}" vs "${awayKey}" after 5s.`);
         await this.cleanupAndGoBack(page);
         // this.setReady(false); // หยุด Auto-bot
       }
 
     } catch (error: any) {
-      this.smartLog(`[AUTO-BOT] ❌ Process Error: ${error.message}`);
+      logWithStep(`[AUTO-BOT] ❌ Process Error: ${error.message}`);
     } finally {
       this.isProcessing = false;
     }
@@ -464,33 +597,41 @@ export class BrowserService {
 
   // ฟังก์ชันช่วยย้อนกลับและปิด Popup (รองรับ Popup โบนัสและวงล้อ)
   private static async cleanupAndGoBack(page: Page) {
-    this.smartLog(`[AUTO-BOT] 🔙 Returning to search results/main page...`);
+    this.smartLog(`🧹 Cleaning up and returning to main page...`);
     
-    // 0. เช็คหน้า Profile/Mine และจัดการ Layer บังหน้า
+    // 0. ปิดหน้าต่าง "ส่งแล้ว" หรือ Dialog เดิมพัน (คลิกที่ Mask/Overlay)
+    await page.evaluate(() => {
+        const masks = document.querySelectorAll('.ui-mask, .ui-overlay, ._mask_, .van-overlay');
+        masks.forEach((el: any) => {
+            el.click(); // ลองคลิกก่อน
+            setTimeout(() => el.remove(), 500); // แล้วค่อยลบทิ้งกันเหนียว
+        });
+        
+        // ลองคลิกพิกัดกลางๆ ขอบบน (พื้นที่ว่างส่วนใหญ่)
+        const event = new MouseEvent('click', { view: window, bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
+        document.body.dispatchEvent(event);
+    }).catch(() => {});
+    
+    await page.waitForTimeout(1000);
+
     const currentUrl = page.url();
     if (currentUrl.includes('/home/mine')) {
-        this.smartLog(`[AUTO-BOT] 🏠 Detected Profile page, force navigating to Sports page...`);
+        this.smartLog(`🏠 Detected Profile page, force navigating to Sports page...`);
         await page.goto('https://www.bet5688q.com/home/sport/soccer', { waitUntil: 'networkidle' }).catch(() => {});
         return;
     }
 
-    await page.evaluate(() => {
-        document.querySelectorAll('.ui-mask, .ui-overlay, ._mask_, .van-overlay').forEach(el => el.remove());
-    }).catch(() => {});
-
-    // 1. คลิกลูกศรมุมบนซ้าย (Back Button) - ลองหลายวิธี
-    // ใช้รหัสสัญลักษณ์ #ui-arrow-418a3a ที่พบใน HTML
+    // 1. คลิกลูกศรมุมบนซ้าย (Back Button)
     const backBtn = page.locator('.lobby-base-header__back, .ui-arrow--left, [xlink\\:href="#ui-arrow-418a3a"]').first();
     
     try {
         if (await backBtn.isVisible()) {
-            this.smartLog(`[AUTO-BOT] 🖱️ Clicking Back button...`);
+            this.smartLog(`🖱️ Clicking Back button...`);
             await backBtn.click({ force: true, timeout: 2000 }).catch(async () => {
-                // ถ้าคลิกธรรมดาไม่ติด ให้คลิกด้วยพิกัด (Fallback)
                 await page.mouse.click(25, 20);
             });
         } else {
-            this.smartLog(`[AUTO-BOT] ⚠️ Back button not visible, using Coordinate Click & Browser Back...`);
+            this.smartLog(`⚠️ Back button not visible, using Coordinate Click & Browser Back...`);
             await page.mouse.click(25, 20).catch(() => {});
             await page.evaluate(() => window.history.back()).catch(() => {});
         }
@@ -786,42 +927,65 @@ export class BrowserService {
   private static async performSearch(page: any, leagueName: string) {
     this.smartLog(`[AUTO-BET] Opening search tool...`);
 
-    // 1. คลิกปุ่มค้นหา (ใช้ Javascript Click เพื่อความแน่นอนสูงสุด)
+    // 1. คลิกปุ่มค้นหา (แว่นขยาย) - พยายามหาจาก data-src เป็นหลักเพราะแน่นอนกว่า Class
     try {
-        await page.evaluate(() => {
-            // หาไอคอนแว่นขยายจาก data-src ที่ระบุว่าเป็น SS (แว่นขยาย)
-            const icons = Array.from(document.querySelectorAll('i._right-icon_j2hkn_82'));
-            const searchIcon = icons.find(el => el.getAttribute('data-src')?.includes('icon_ty_ss.svg'));
+        const iconFound = await page.evaluate(() => {
+            const allIcons = Array.from(document.querySelectorAll('i, svg, img, div'));
+            const searchIcon = allIcons.find(el => {
+                const src = el.getAttribute('data-src') || el.getAttribute('src') || '';
+                return src.includes('icon_ty_ss.svg') || (el.classList.contains('icon-search') || el.classList.contains('search-icon'));
+            });
+
             if (searchIcon) {
                 (searchIcon as HTMLElement).click();
-                return true;
-            }
-            // ถ้าหาจาก data-src ไม่เจอ ให้ลองคลิกตัวที่ 2 ในกลุ่ม
-            if (icons[1]) {
-                (icons[1] as HTMLElement).click();
                 return true;
             }
             return false;
         });
         
-        this.smartLog(` - JS Click triggered.`);
+        if (!iconFound) {
+            this.smartLog(` - Warning: Search icon not found via JS evaluation. Trying fallback selectors...`);
+            await page.click('.icon-search, .search-icon, .fa-search, [class*="search"]').catch(() => {});
+        }
+        
+        this.smartLog(` - Search trigger attempted.`);
     } catch (e: any) {
-        this.smartLog(` - Warning: JS Click failed: ${e.message}`);
+        this.smartLog(` - Warning: Search trigger failed: ${e.message}`);
     }
 
-    // รอให้หน้าต่างค้นหา (Modal) โผล่ขึ้นมาก่อน
-    await page.waitForTimeout(1500);
+    // รอให้หน้าต่างค้นหา (Modal) โผล่ขึ้นมา
+    await page.waitForTimeout(2000);
 
     // 2. รอและกรอกชื่อลีก
     try {
-      // เจาะจงเฉพาะช่อง Input ที่เป็น Text และอยู่ใน Modal ค้นหา
-      const inputSelector = 'input.ui-input__input[type="text"], input[placeholder*="ค้นหา"], .ui-input__input input';
-      await page.waitForSelector(inputSelector, { state: 'visible', timeout: 8000 });
+      const inputSelectors = [
+        'input.ui-input__input[type="text"]',
+        'input[placeholder*="ค้นหา"]',
+        'input[placeholder*="Search"]',
+        '.ui-input__input input',
+        '.search-input input',
+        'input.van-field__control'
+      ];
+      
+      let inputFound = false;
+      for (const selector of inputSelectors) {
+          try {
+              const input = page.locator(selector).first();
+              if (await input.isVisible({ timeout: 1500 })) {
+                  this.smartLog(`[AUTO-BET] Found search input via: ${selector}`);
+                  await input.fill(''); // ล้างค่าเก่า
+                  await input.fill(leagueName);
+                  inputFound = true;
+                  break;
+              }
+          } catch (e) {}
+      }
+
+      if (!inputFound) {
+          throw new Error("Could not find search input field after multiple attempts");
+      }
       
       this.smartLog(`[AUTO-BET] Entering league name: ${leagueName}`);
-      const input = page.locator(inputSelector).first();
-      await input.fill(''); // ล้างค่าเก่า
-      await input.fill(leagueName);
       await page.waitForTimeout(800);
 
       // 3. กดปุ่มยืนยันการค้นหา
@@ -861,8 +1025,8 @@ export class BrowserService {
         return web.toLowerCase().includes(target.toLowerCase());
       }
 
-      // เทียบค่าสัมบูรณ์ (เพราะหน้าเว็บอาจจะใส่ - หรือ + ไม่เหมือนกันในแต่ละบล็อก)
-      return Math.abs(Math.abs(tValue) - Math.abs(wValue)) < 0.01;
+      // เทียบค่าแบบตรงไปตรงมา (ไม่ใช้ Math.abs) เพื่อให้เครื่องหมาย +/- ต้องตรงกันด้วย
+      return Math.abs(tValue - wValue) < 0.01;
     } catch {
       return false;
     }

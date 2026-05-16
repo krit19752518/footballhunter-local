@@ -79,9 +79,10 @@ class Signal {
   final String logicType;
   final String message;
   final DateTime createdAt;
-  final String? matchTimeAtSignal; // เพิ่มส่วนนี้
+  final String? matchTimeAtSignal;
   final bool? isWon;
   final FootballMatch? match;
+  final Bet? bet; // แก้จาก List เป็นออบเจกต์เดียว
 
   Signal({
     required this.id,
@@ -92,6 +93,7 @@ class Signal {
     this.isWon,
     this.match,
     this.period,
+    this.bet,
   });
 
   final String? period;
@@ -106,6 +108,7 @@ class Signal {
       isWon: json['isWon'],
       match: json['match'] != null ? FootballMatch.fromJson(json['match']) : null,
       period: json['period'],
+      bet: json['bet'] != null ? Bet.fromJson(json['bet']) : null,
     );
   }
 }

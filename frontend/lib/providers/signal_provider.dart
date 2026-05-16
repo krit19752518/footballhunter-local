@@ -52,29 +52,131 @@ class SignalProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> triggerTestBot({
-    required String leagueName,
-    required String matchName,
-    required String betSide,
-    required double amount,
-    required String targetLine,
-  }) async {
-    await ApiService.testAutoBot(
-      leagueName: leagueName,
-      matchName: matchName,
-      betSide: betSide,
-      amount: amount,
-      targetLine: targetLine,
-    );
-    await fetchData(); // รีเฟรชสถานะบอท
+  final Set<String> _selectedSignalIds = {};
+  Set<String> get selectedSignalIds => _selectedSignalIds;
+
+  bool _isTestRunning = false;
+  bool get isTestRunning => _isTestRunning;
+
+  String _testStatus = "ระบบพร้อมทดสอบ";
+  String get testStatus => _testStatus;
+
+  List<String> _testLogs = [];
+  List<String> get testLogs => _testLogs;
+
+  void toggleSignalSelection(String id) {
+    if (_selectedSignalIds.contains(id)) {
+      _selectedSignalIds.remove(id);
+    } else {
+      _selectedSignalIds.add(id);
+    }
+    notifyListeners();
   }
 
-  Future<void> nextStep() async {
-    await ApiService.nextStep();
+  void clearSelection() {
+    _selectedSignalIds.clear();
+    notifyListeners();
+  }
+
+  // ระบบดึง Log และสถานะแบบ Real-time
+  bool _shouldPollLogs = false;
+  Future<void> _startLogPolling() async {
+    _shouldPollLogs = true;
+    while (_shouldPollLogs) {
+      await Future.delayed(const Duration(seconds: 2));
+      _testLogs = await ApiService.getTestLogs();
+      
+      final status = await ApiService.getTestStatus();
+      bool queueEmpty = status['isQueueEmpty'] ?? true;
+      bool testRunning = status['isTestRunning'] ?? false;
+
+      // ถ้าคิวว่างและไม่มีงานรันอยู่ ให้หยุดรัน (Reset ปุ่ม)
+      if (queueEmpty && !testRunning && _isTestRunning) {
+        _isTestRunning = false;
+        _testStatus = "การทดสอบเสร็จสิ้นทั้งหมดแล้ว";
+        _shouldPollLogs = false;
+      }
+      
+      notifyListeners();
+    }
+  }
+
+  Future<void> startBulkTest() async {
+    if (_selectedSignalIds.isEmpty) return;
+    
+    _isTestRunning = true;
+    _testStatus = "กำลังเริ่มการทดสอบ (${_selectedSignalIds.length} รายการ)...";
+    _testLogs = ["กำลังเตรียมระบบ..."];
+    notifyListeners();
+
+    _startLogPolling(); // เริ่มดึง Log
+
+    try {
+      int count = 1;
+      final idsToProcess = _selectedSignalIds.toList();
+      
+      for (var id in idsToProcess) {
+        final signal = _signals.firstWhere((s) => s.id == id);
+        final match = signal.match;
+        final bet = signal.bet;
+
+        if (match == null || bet == null) {
+          _testStatus = "ข้ามคู่ที่ข้อมูลไม่ครบ: ID $id";
+          notifyListeners();
+          continue;
+        }
+        
+        String league = match.leagueName;
+        String matchName = match.name;
+        String side = bet.betSide ?? "ทีมเหย้า"; 
+        String targetLine = bet.lineAtBet ?? "0";
+
+        _testStatus = "กำลังส่งคิวที่ $count/${idsToProcess.length}: $matchName";
+        notifyListeners();
+
+        await ApiService.testAutoBot(
+          leagueName: league,
+          matchName: matchName,
+          betSide: side,
+          amount: 10.0,
+          targetLine: targetLine,
+        );
+        count++;
+      }
+      _testStatus = "ส่งงานเข้าคิวครบแล้ว (${idsToProcess.length} รายการ) | รอทำตามขั้นตอน...";
+    } catch (e) {
+      _testStatus = "เกิดข้อผิดพลาด: $e";
+    }
+    notifyListeners();
   }
 
   Future<void> stopTest() async {
     await ApiService.stopTest();
+    _testStatus = "สั่งหยุดการทดสอบปัจจุบันแล้ว";
+    notifyListeners();
+  }
+
+  Future<void> clearTestQueue() async {
+    _shouldPollLogs = false;
+    await ApiService.clearTestQueue();
+    _isTestRunning = false;
+    _selectedSignalIds.clear();
+    _testLogs.clear();
+    _testStatus = "ล้างคิวและหยุดการทดสอบทั้งหมดแล้ว";
+    notifyListeners();
+  }
+
+  Future<void> nextStep() async {
+    await ApiService.nextStep();
+    
+    // หลังจากกด Next ลองเช็คสถานะทันที
+    final status = await ApiService.getTestStatus();
+    if (status['isQueueEmpty'] == true && status['isTestRunning'] == false) {
+       _isTestRunning = false;
+       _testStatus = "การทดสอบเสร็จสิ้นแล้ว";
+       _shouldPollLogs = false;
+       notifyListeners();
+    }
   }
 
   void _sortMatches() {

@@ -62,7 +62,10 @@ app.get('/signals', async (req, res) => {
     const signals = await prisma.signal.findMany({
       where: { match: { status: 'Live' } },
       orderBy: { createdAt: 'desc' },
-      include: { match: true }
+      include: { 
+        match: true,
+        bet: true // แก้จาก bets เป็น bet
+      }
     });
     res.json(signals);
   } catch (error) {
@@ -141,6 +144,23 @@ app.post('/browser/test-bot/next', (req, res) => {
 app.post('/browser/test-bot/stop', (req, res) => {
   BrowserService.stopTest();
   res.json({ success: true, message: 'Test stop requested' });
+});
+
+app.post('/browser/test-bot/clear', (req, res) => {
+  BrowserService.clearQueue();
+  res.json({ success: true, message: 'Queue cleared' });
+});
+
+app.get('/browser/test-bot/logs', (req, res) => {
+  res.json({ success: true, logs: BrowserService.getTestLogs(30) });
+});
+
+app.get('/browser/test-bot/status', (req, res) => {
+  res.json({ 
+    success: true, 
+    isQueueEmpty: BrowserService.isQueueEmpty(),
+    isTestRunning: BrowserService.getIsTestRunning()
+  });
 });
 
 io.on('connection', (socket) => {

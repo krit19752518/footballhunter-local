@@ -88,4 +88,25 @@ class ApiService {
   static Future<void> stopTest() async {
     await http.post(Uri.parse('$baseUrl/browser/test-bot/stop'));
   }
+
+  static Future<void> clearTestQueue() async {
+    await http.post(Uri.parse('$baseUrl/browser/test-bot/clear'));
+  }
+
+  static Future<List<String>> getTestLogs() async {
+    final response = await http.get(Uri.parse('$baseUrl/browser/test-bot/logs'));
+    if (response.statusCode == 200) {
+      List logs = json.decode(response.body)['logs'];
+      return logs.map((l) => l.toString()).toList();
+    }
+    return [];
+  }
+
+  static Future<Map<String, dynamic>> getTestStatus() async {
+    final response = await http.get(Uri.parse('$baseUrl/browser/test-bot/status'));
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    }
+    return {'isQueueEmpty': true, 'isTestRunning': false};
+  }
 }
