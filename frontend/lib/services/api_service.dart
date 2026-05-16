@@ -60,4 +60,32 @@ class ApiService {
       body: json.encode({'ready': ready}),
     );
   }
+
+  static Future<void> testAutoBot({
+    required String leagueName,
+    required String matchName,
+    required String betSide,
+    required double amount,
+    required String targetLine,
+  }) async {
+    await http.post(
+      Uri.parse('$baseUrl/browser/test-bot'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({
+        'leagueName': leagueName,
+        'matchName': matchName,
+        'betSide': betSide,
+        'amount': amount,
+        'targetLine': targetLine,
+      }),
+    );
+  }
+
+  static Future<void> nextStep() async {
+    await http.post(Uri.parse('$baseUrl/browser/test-bot/next'));
+  }
+
+  static Future<void> stopTest() async {
+    await http.post(Uri.parse('$baseUrl/browser/test-bot/stop'));
+  }
 }

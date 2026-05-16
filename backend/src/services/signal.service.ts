@@ -116,7 +116,7 @@ export class SignalService {
       // 3. ประกอบข้อความใหม่ โดยเอา Tag ไว้หน้าสุดเพื่อให้เด่นชัด
       const finalMessage = `${periodTag} ${cleanMsg}`;
 
-      botLog(`[SIGNAL] New signal detected for ${match.name}. Recording...`);
+      // ลบ Log Recording ที่ซ้ำซ้อนออก
       const signal = await prisma.signal.create({
         data: { 
           matchId: match.id, 
@@ -140,7 +140,37 @@ export class SignalService {
         }
       });
 
-      botLog(`[SIGNAL & BET] ${logicType} recorded for ${match.name} at ${match.matchTime}'`);
+      // หาว่า betSide เป็น เหย้า หรือ เยือน
+      let sideLabel = betSide;
+      if (betSide === match.homeTeam) sideLabel = 'ทีมเหย้า';
+      else if (betSide === match.awayTeam) sideLabel = 'ทีมเยือน';
+      else if (betSide.includes('สูง')) sideLabel = 'สูง';
+      else if (betSide.includes('ต่ำ')) sideLabel = 'ต่ำ';
+
+      const periodLabel = period === 'FH' ? 'ครึ่งแรก' : 'เต็มเวลา';
+
+      // ฟังก์ชันแปลงทศนิยมกลับเป็นราคาควบ (Handicap Format)
+      const formatLine = (l: string) => {
+        const v = parseFloat(l);
+        if (isNaN(v)) return l;
+        const absV = Math.abs(v);
+        const sign = v < 0 ? '-' : (v > 0 ? '+' : '');
+        const remainder = absV % 1;
+        
+        if (Math.abs(remainder - 0.25) < 0.01) {
+          const base = Math.floor(absV);
+          return `${sign}${base}/${base + 0.5}`;
+        }
+        if (Math.abs(remainder - 0.75) < 0.01) {
+          const base = Math.floor(absV);
+          return `${sign}${base + 0.5}/${base + 1}`;
+        }
+        return l;
+      };
+
+      const webLine = formatLine(lineAtBet);
+
+      botLog(`[SIGNAL & BET] ✅ [ลีก: ${match.leagueName}] [คู่: ${match.name}] [ฝั่ง: ${sideLabel}] [ราคา: ${webLine}] [ช่วงเวลา: ${periodLabel}] (นาทีที่ ${match.matchTime}')`);
 
       // Trigger Auto-Bet if ready
       if (BrowserService.getStatus()) {
@@ -158,7 +188,7 @@ export class SignalService {
           });
         }
       } else {
-        botLog(`[AUTO-BET] System is NOT READY (Paused). Skipping browser action.`);
+        // ปิด Log Not Ready เพื่อความสะอาด
         await prisma.bet.update({
           where: { id: bet.id },
           data: { autoBetStatus: 'Paused' }

@@ -52,6 +52,31 @@ class SignalProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> triggerTestBot({
+    required String leagueName,
+    required String matchName,
+    required String betSide,
+    required double amount,
+    required String targetLine,
+  }) async {
+    await ApiService.testAutoBot(
+      leagueName: leagueName,
+      matchName: matchName,
+      betSide: betSide,
+      amount: amount,
+      targetLine: targetLine,
+    );
+    await fetchData(); // รีเฟรชสถานะบอท
+  }
+
+  Future<void> nextStep() async {
+    await ApiService.nextStep();
+  }
+
+  Future<void> stopTest() async {
+    await ApiService.stopTest();
+  }
+
   void _sortMatches() {
     // ดึง Match ID ทั้งหมดที่มีการแทงแบบ Pending
     final pendingMatchIds = _latestBets

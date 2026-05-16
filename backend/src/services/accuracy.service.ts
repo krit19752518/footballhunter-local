@@ -102,7 +102,7 @@ export class AccuracyService {
         data: { isWon: status === 'Won' }
       });
 
-      console.log(`[BET SETTLED] ${match.name}: ${status} | Score: ${finalHome}-${finalAway} | Side: ${betSide} | Line: ${lineStr}`);
+      console.log(`[BET SETTLED] [ลีก: ${match.leagueName}] ${match.name}: ${status} | Score: ${finalHome}-${finalAway} | Side: ${betSide} | Line: ${lineStr}`);
     }
   }
 }

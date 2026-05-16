@@ -14,15 +14,26 @@ import path from 'path';
 
 dotenv.config();
 
-// ระบบ Logging ลงไฟล์
+// ระบบ Logging หลัก (Live)
 const logFile = path.join(__dirname, '../bot.log');
 const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+
+// ระบบ Logging แยกสำหรับ Test
+const testLogFile = path.join(__dirname, '../testbot.log');
+const testLogStream = fs.createWriteStream(testLogFile, { flags: 'a' });
 
 export const log = (message: string) => {
   const timestamp = new Date().toLocaleString();
   const formattedMessage = `[${timestamp}] ${message}`;
   console.log(formattedMessage);
   logStream.write(formattedMessage + '\n');
+};
+
+export const testLog = (message: string) => {
+  const timestamp = new Date().toLocaleString();
+  const formattedMessage = `[${timestamp}] ${message}`;
+  console.log(formattedMessage);
+  testLogStream.write(formattedMessage + '\n');
 };
 
 export const app = express();
@@ -92,6 +103,44 @@ app.post('/browser/ready', (req, res) => {
   const { ready } = req.body;
   BrowserService.setReady(ready);
   res.json({ success: true, isReady: ready });
+});
+
+app.post('/browser/test-bot', async (req, res) => {
+  try {
+    const { 
+      leagueName = 'นิวซีแลนด์ เซ็นทรัลลีก', 
+      matchName = 'วอเตอร์ไซด์ คารอรี่ vs เวสเทิร์น ซับเบอร์บ เอฟซี', 
+      betSide = 'วอเตอร์ไซด์ คารอรี่', 
+      amount = 10, 
+      targetLine = '+0/0.5' 
+    } = req.body;
+
+    log(`[TEST-BOT] 🧪 Triggering dynamic test bot: ${matchName}`);
+    
+    // ส่งเข้าคิวงานของบอท โดยระบุว่าเป็น Test (isTest = true)
+    await BrowserService.findAndBet(
+      leagueName,
+      matchName,
+      betSide,
+      amount,
+      targetLine,
+      true // isTest = true
+    );
+
+    res.json({ success: true, message: 'Test bot triggered', data: { leagueName, matchName, betSide, amount, targetLine } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/browser/test-bot/next', (req, res) => {
+  BrowserService.nextStep();
+  res.json({ success: true, message: 'Continuing to next step' });
+});
+
+app.post('/browser/test-bot/stop', (req, res) => {
+  BrowserService.stopTest();
+  res.json({ success: true, message: 'Test stop requested' });
 });
 
 io.on('connection', (socket) => {

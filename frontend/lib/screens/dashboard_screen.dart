@@ -6,6 +6,7 @@ import '../widgets/signal_card.dart';
 import '../widgets/bet_card.dart';
 import '../utils/formatters.dart';
 import 'bet_history_screen.dart';
+import 'test_bot_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -20,6 +21,22 @@ class DashboardScreen extends StatelessWidget {
         title: const Text('Football Hunter Dashboard', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: const Color(0xFF1E293B),
         actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+            child: OutlinedButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const TestBotScreen()),
+                );
+              },
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Colors.red, width: 2),
+                foregroundColor: Colors.yellow,
+              ),
+              child: const Text('Test Auto-bot', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 10),
             child: ElevatedButton.icon(
