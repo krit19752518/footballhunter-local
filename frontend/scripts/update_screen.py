@@ -217,7 +217,7 @@ new_board_func = '''Widget _buildSummaryBoard({
                   ),
                   child: Column(
                     children: [
-                      const Text('Mock up Bot', style: TextStyle(color: Colors.yellowAccent, fontSize: 18, fontWeight: FontWeight.bold)),
+                       const Text('MockUp Bot', style: TextStyle(color: Colors.yellowAccent, fontSize: 18, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 16),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -232,6 +232,8 @@ new_board_func = '''Widget _buildSummaryBoard({
                         children: [
                           _buildStatItem('ชนะ', Formatters.formatNumber(winCount), Colors.greenAccent),
                           _buildStatItem('แพ้', Formatters.formatNumber(loseCount), Colors.redAccent),
+                          _buildStatItem('รอลุ้น', Formatters.formatNumber(pendingCount), Colors.white54),
+                          _buildStatItem('Win Rate', '${winRate.toStringAsFixed(1)}%', Colors.blueAccent),
                         ],
                       ),
                       const SizedBox(height: 16),
