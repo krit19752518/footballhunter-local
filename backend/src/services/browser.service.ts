@@ -393,7 +393,19 @@ export class BrowserService {
                     }
 
                     if (targetBox) {
-                        const oddsText = await targetBox.locator('._odds_1qbu6_57, [class*="odds"]').innerText().catch(() => "N/A");
+                        let oddsText = await targetBox.locator('[class*="_odds_"], [class*="odds"]').innerText().catch(() => "N/A");
+                        if (oddsText === "N/A" || oddsText.trim() === "" || isNaN(parseFloat(oddsText.replace(/[^0-9.]/g, '')))) {
+                            // Self-healing fallback: scan all sub-elements for a decimal odds number
+                            const allElements = await targetBox.locator('span, div, p').all();
+                            for (const el of allElements) {
+                                const text = await el.innerText().catch(() => "");
+                                const num = parseFloat(text.replace(/[^0-9.]/g, ''));
+                                if (!isNaN(num) && num >= 1.01 && num <= 20.0) {
+                                    oddsText = text;
+                                    break;
+                                }
+                            }
+                        }
                         finalOdds = parseFloat(oddsText.replace(/[^0-9.]/g, '')) || 0.0;
                         logWithStep(`[AUTO-BOT] 🎯 Found matching price! Odds: ${oddsText} (${finalOdds}). Clicking...`);
                         
@@ -923,7 +935,19 @@ export class BrowserService {
 
       if (betBoxes.length > columnIndex) {
         const targetBtn = betBoxes[columnIndex];
-        const oddsText = await targetBtn.locator('._odds_1qbu6_57').innerText().catch(() => "N/A");
+        let oddsText = await targetBtn.locator('[class*="_odds_"], [class*="odds"]').innerText().catch(() => "N/A");
+        if (oddsText === "N/A" || oddsText.trim() === "" || isNaN(parseFloat(oddsText.replace(/[^0-9.]/g, '')))) {
+            // Self-healing fallback: scan all sub-elements for a decimal odds number
+            const allElements = await targetBtn.locator('span, div, p').all();
+            for (const el of allElements) {
+                const text = await el.innerText().catch(() => "");
+                const num = parseFloat(text.replace(/[^0-9.]/g, ''));
+                if (!isNaN(num) && num >= 1.01 && num <= 20.0) {
+                    oddsText = text;
+                    break;
+                }
+            }
+        }
         const labelText = await targetBtn.locator('._bet-label_1ckm8_65').innerText().catch(() => "N/A");
 
         // --- Line Verification ---

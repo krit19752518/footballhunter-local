@@ -119,7 +119,7 @@ replacement_stat_calc = '''          // คำนวณสถิติ Mock Bot
                 if (mockBet.status == 'Won') {
                   realWinCount++;
                   // กำไรสุทธิจากอัตราต่อรองของจริง (ถ้าไม่มีให้ใช้ 1.8 สมมติ)
-                  double odds = realBet.oddsAtBet ?? 1.8;
+                  double odds = (realBet.oddsAtBet != null && realBet.oddsAtBet! >= 1.0) ? realBet.oddsAtBet! : 1.8;
                   realNetProfit += (amount * (odds - 1));
                 } else if (mockBet.status == 'Lost') {
                   realLoseCount++;
