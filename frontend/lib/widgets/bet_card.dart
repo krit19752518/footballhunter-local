@@ -21,6 +21,10 @@ class BetCard extends StatelessWidget {
     Color autoBetColor;
     IconData autoBetIcon;
     switch (bet.autoBetStatus) {
+      case 'Queued':
+        autoBetColor = Colors.blueAccent;
+        autoBetIcon = Icons.query_builder;
+        break;
       case 'Executed':
         autoBetColor = Colors.greenAccent;
         autoBetIcon = Icons.check_circle_outline;

@@ -179,7 +179,7 @@ export class SignalService {
           await BrowserService.findAndBet(match.leagueName, match.name, betSide, 10, lineAtBet, false, signal.id);
           await prisma.bet.update({
             where: { id: bet.id },
-            data: { autoBetStatus: 'Executed' }
+            data: { autoBetStatus: 'Queued' }
           });
         } catch (e: any) {
           await prisma.bet.update({

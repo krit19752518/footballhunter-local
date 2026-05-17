@@ -15,6 +15,7 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
   DateTimeRange? _selectedDateRange;
   late Future<List<Bet>> _betsFuture;
   late Future<List<RealBetLog>> _realBetsFuture;
+  bool _showRealLogs = false;
 
   @override
   void initState() {
@@ -157,7 +158,7 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
               realTotalBetAmount += amount;
 
               // หา Bet ที่ตรงกันจาก mock bot เพื่อดูสถานะแพ้/ชนะ
-              var mockBetMatch = filteredBets.where((b) => b.signalId == realBet.signalId).toList();
+              var mockBetMatch = allBets.where((b) => b.signalId == realBet.signalId).toList();
               if (mockBetMatch.isNotEmpty) {
                 var mockBet = mockBetMatch.first;
                 if (mockBet.status == 'Won') {
@@ -195,68 +196,125 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
                 realPendingCount: realPendingCount,
                 realNetProfit: realNetProfit,
               ),
-              Expanded(
+              // สวิตช์เลือกโหมดแสดงผล
+              Container(
+                color: const Color(0xFF1E293B),
+                padding: const EdgeInsets.symmetric(vertical: 12),
                 child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // คอลัมน์กำลังแข่งขัน (แยกครึ่งแรก/ครึ่งหลัง)
-                    Expanded(
-                      flex: 2, // ขยายพื้นที่ให้กว้างขึ้นสำหรับ 2 คอลัมน์ย่อย
-                      child: Container(
-                        decoration: const BoxDecoration(
-                          border: Border(right: BorderSide(color: Colors.white10)),
-                        ),
-                        child: Column(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              width: double.infinity,
-                              color: Colors.white.withOpacity(0.02),
-                              child: Center(
-                                child: Text(
-                                  'กำลังแข่งขัน (${Formatters.formatNumber(pendingBets.length)} คู่)',
-                                  style: const TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.yellowAccent,
-                                  ),
-                                ),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: !_showRealLogs ? const Color(0xFF3B82F6) : const Color(0xFF334155),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _showRealLogs = false;
+                        });
+                      },
+                      icon: const Icon(Icons.analytics_outlined, size: 18),
+                      label: const Text('Mock up Bot Details', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                    const SizedBox(width: 16),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _showRealLogs ? const Color(0xFF3B82F6) : const Color(0xFF334155),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _showRealLogs = true;
+                        });
+                      },
+                      icon: const Icon(Icons.playlist_add_check_circle_outlined, size: 18),
+                      label: const Text('Real Bot Logs & Failures', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: _showRealLogs
+                    ? Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildRealColumn(
+                            title: 'แทงสำเร็จ (${Formatters.formatNumber(filteredRealBets.where((b) => b.status == 'Executed').length)} รายการ)',
+                            logs: filteredRealBets.where((b) => b.status == 'Executed').toList(),
+                            titleColor: Colors.greenAccent,
+                          ),
+                          _buildRealColumn(
+                            title: 'แทงล้มเหลว (${Formatters.formatNumber(filteredRealBets.where((b) => b.status != 'Executed').length)} รายการ)',
+                            logs: filteredRealBets.where((b) => b.status != 'Executed').toList(),
+                            titleColor: Colors.redAccent,
+                          ),
+                        ],
+                      )
+                    : Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // คอลัมน์กำลังแข่งขัน (แยกครึ่งแรก/ครึ่งหลัง)
+                          Expanded(
+                            flex: 2, // ขยายพื้นที่ให้กว้างขึ้นสำหรับ 2 คอลัมน์ย่อย
+                            child: Container(
+                              decoration: const BoxDecoration(
+                                border: Border(right: BorderSide(color: Colors.white10)),
                               ),
-                            ),
-                            const Divider(height: 1, color: Colors.white10),
-                            Expanded(
-                              child: Row(
+                              child: Column(
                                 children: [
-                                  _buildSubColumn(
-                                    title: 'ครึ่งแรก',
-                                    bets: pendingBets.where((b) => b.period == 'FH').toList(),
-                                    titleColor: Colors.yellowAccent.withOpacity(0.8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(vertical: 16),
+                                    width: double.infinity,
+                                    color: Colors.white.withOpacity(0.02),
+                                    child: Center(
+                                      child: Text(
+                                        'กำลังแข่งขัน (${Formatters.formatNumber(pendingBets.length)} คู่)',
+                                        style: const TextStyle(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.yellowAccent,
+                                        ),
+                                      ),
+                                    ),
                                   ),
-                                  const VerticalDivider(width: 1, color: Colors.white10),
-                                  _buildSubColumn(
-                                    title: 'เต็มเวลา',
-                                    bets: pendingBets.where((b) => b.period != 'FH').toList(), // รวม FT ทั้งหมดเป็นเต็มเวลา
-                                    titleColor: Colors.orangeAccent,
+                                  const Divider(height: 1, color: Colors.white10),
+                                  Expanded(
+                                    child: Row(
+                                      children: [
+                                        _buildSubColumn(
+                                          title: 'ครึ่งแรก',
+                                          bets: pendingBets.where((b) => b.period == 'FH').toList(),
+                                          titleColor: Colors.yellowAccent.withOpacity(0.8),
+                                        ),
+                                        const VerticalDivider(width: 1, color: Colors.white10),
+                                        _buildSubColumn(
+                                          title: 'เต็มเวลา',
+                                          bets: pendingBets.where((b) => b.period != 'FH').toList(), // รวม FT ทั้งหมดเป็นเต็มเวลา
+                                          titleColor: Colors.orangeAccent,
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ],
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                          _buildColumn(
+                            title: 'ชนะ (${Formatters.formatNumber(wonBets.length)} คู่)',
+                            bets: wonBets,
+                            titleColor: Colors.greenAccent,
+                          ),
+                          _buildColumn(
+                            title: 'แพ้ (${Formatters.formatNumber(lostBets.length)} คู่)',
+                            bets: lostBets,
+                            titleColor: Colors.redAccent,
+                          ),
+                        ],
                       ),
-                    ),
-                    _buildColumn(
-                      title: 'ชนะ (${Formatters.formatNumber(wonBets.length)} คู่)',
-                      bets: wonBets,
-                      titleColor: Colors.greenAccent,
-                    ),
-                    _buildColumn(
-                      title: 'แพ้ (${Formatters.formatNumber(lostBets.length)} คู่)',
-                      bets: lostBets,
-                      titleColor: Colors.redAccent,
-                    ),
-                  ],
-                ),
               ),
             ],
           );
@@ -486,6 +544,149 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildRealColumn({required String title, required List<RealBetLog> logs, required Color titleColor}) {
+    return Expanded(
+      child: Container(
+        decoration: const BoxDecoration(
+          border: Border(right: BorderSide(color: Colors.white10)),
+        ),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              width: double.infinity,
+              color: Colors.white.withOpacity(0.02),
+              child: Center(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: titleColor,
+                  ),
+                ),
+              ),
+            ),
+            const Divider(height: 1, color: Colors.white10),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.all(12),
+                itemCount: logs.length,
+                itemBuilder: (context, index) => _buildRealBetLogCard(logs[index], index + 1),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRealBetLogCard(RealBetLog log, int runningNo) {
+    final isSuccess = log.status == 'Executed';
+    final Color cardColor = isSuccess ? Colors.greenAccent : Colors.redAccent;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: cardColor.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  log.betSide ?? 'Unknown',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.yellowAccent),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Text(
+                'No.$runningNo',
+                style: const TextStyle(fontSize: 11, color: Colors.white38, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: cardColor.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  log.status ?? 'Failed',
+                  style: TextStyle(color: cardColor, fontWeight: FontWeight.bold, fontSize: 10),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${log.leagueName} | ${log.matchName}',
+            style: const TextStyle(fontSize: 10, color: Colors.white38),
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'จำนวนเดิมพัน: ${log.amount ?? 10} ฿',
+                style: const TextStyle(fontSize: 11, color: Colors.white70),
+              ),
+              if (log.oddsAtBet != null)
+                Text(
+                  'ค่าน้ำจริง: @${log.oddsAtBet}',
+                  style: const TextStyle(fontSize: 11, color: Colors.greenAccent, fontWeight: FontWeight.bold),
+                ),
+            ],
+          ),
+          if (!isSuccess && log.errorMessage != null) ...[
+            const Divider(color: Colors.white10),
+            Container(
+              padding: const EdgeInsets.all(8),
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.redAccent.withOpacity(0.2)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'สาเหตุความล้มเหลว:',
+                    style: TextStyle(fontSize: 10, color: Colors.redAccent, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    log.errorMessage!,
+                    style: const TextStyle(fontSize: 11, color: Colors.white70),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('เวลาทำรายการ:', style: TextStyle(fontSize: 10, color: Colors.white38)),
+              Text(
+                log.createdAt.toLocal().toString().split('.')[0],
+                style: const TextStyle(fontSize: 10, color: Colors.white54),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

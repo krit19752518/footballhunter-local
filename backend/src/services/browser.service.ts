@@ -567,6 +567,12 @@ export class BrowserService {
                                         status: 'Executed'
                                       }
                                     }).catch((err: any) => this.smartLog(`[REAL-BET-LOG] Error: ${err.message}`));
+                                    if (taskId) {
+                                        await prisma.bet.update({
+                                            where: { signalId: taskId },
+                                            data: { autoBetStatus: 'Executed', oddsAtBet: finalOdds }
+                                        }).catch((err: any) => this.smartLog(`[REAL-BET-LOG] Failed update Bet: ${err.message}`));
+                                    }
                                 }
 
                                 // --- ขั้นตอน Cleanup (ปิดหน้าต่างที่เบลอๆ) ---
@@ -622,6 +628,13 @@ export class BrowserService {
               errorMessage: error.message
             }
           }).catch((err: any) => this.smartLog(`[REAL-BET-LOG] Failed write error: ${err.message}`));
+
+          if (taskId) {
+              await prisma.bet.update({
+                  where: { signalId: taskId },
+                  data: { autoBetStatus: 'Failed', autoBetError: error.message }
+              }).catch((err: any) => this.smartLog(`[REAL-BET-LOG] Failed update Bet error: ${err.message}`));
+          }
       }
       await this.cleanupAndGoBack(page).catch(() => {});
     } finally {
@@ -982,6 +995,13 @@ export class BrowserService {
           }
         }).catch((err: any) => this.smartLog(`[REAL-BET-LOG] Error: ${err.message}`));
 
+        if (taskId) {
+          await prisma.bet.update({
+            where: { signalId: taskId },
+            data: { autoBetStatus: 'Executed', oddsAtBet: parseFloat(oddsText.replace(/[^0-9.]/g, '')) }
+          }).catch((err: any) => this.smartLog(`[REAL-BET-LOG] Failed update Bet: ${err.message}`));
+        }
+
         await this.cleanupAndGoBack(page);
         return;
       } else {
@@ -1002,6 +1022,13 @@ export class BrowserService {
           errorMessage: error.message
         }
       }).catch(() => { });
+
+      if (taskId) {
+        await prisma.bet.update({
+          where: { signalId: taskId },
+          data: { autoBetStatus: 'Failed', autoBetError: error.message }
+        }).catch(() => {});
+      }
     }
   }
 
