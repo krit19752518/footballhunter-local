@@ -3,6 +3,7 @@ import '../models/football_models.dart';
 import '../services/api_service.dart';
 import '../utils/formatters.dart';
 import '../widgets/bet_card.dart';
+import '../widgets/signal_card.dart';
 
 class BetHistoryScreen extends StatefulWidget {
   const BetHistoryScreen({super.key});
@@ -15,13 +16,15 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
   DateTimeRange? _selectedDateRange;
   late Future<List<Bet>> _betsFuture;
   late Future<List<RealBetLog>> _realBetsFuture;
+  late Future<List<Signal>> _signalsFuture;
   bool _showRealLogs = false;
 
   @override
   void initState() {
     super.initState();
     _betsFuture = ApiService.getBetHistory();
-                _realBetsFuture = ApiService.getRealBetHistory();
+    _realBetsFuture = ApiService.getRealBetHistory();
+    _signalsFuture = ApiService.getSignals();
   }
 
   Future<void> _selectDateRange() async {
@@ -70,13 +73,14 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
               setState(() {
                 _betsFuture = ApiService.getBetHistory();
                 _realBetsFuture = ApiService.getRealBetHistory();
+                _signalsFuture = ApiService.getSignals();
               });
             },
           ),
         ],
       ),
       body: FutureBuilder<List<dynamic>>(
-        future: Future.wait([_betsFuture, _realBetsFuture]),
+        future: Future.wait([_betsFuture, _realBetsFuture, _signalsFuture]),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -87,21 +91,29 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
 
           List<Bet> allBets = snapshot.data?[0] ?? [];
           List<RealBetLog> allRealBets = snapshot.data?[1] ?? [];
+          List<Signal> allSignals = snapshot.data?[2] ?? [];
           
           // กรองข้อมูลตามช่วงวันที่เลือก
           List<Bet> filteredBets = allBets;
+          List<Signal> filteredSignals = allSignals;
           if (_selectedDateRange != null) {
             final start = _selectedDateRange!.start;
             final end = _selectedDateRange!.end.add(const Duration(hours: 23, minutes: 59, seconds: 59));
             filteredBets = allBets.where((bet) {
               return bet.createdAt.isAfter(start) && bet.createdAt.isBefore(end);
             }).toList();
+            filteredSignals = allSignals.where((sig) {
+              return sig.createdAt.isAfter(start) && sig.createdAt.isBefore(end);
+            }).toList();
           }
 
-          // กรองข้อมูลตามสถานะ
+          // เรียงตามเวลาล่าสุด
+          filteredSignals.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+          // กรองข้อมูลตามสถานะ (ชนะ, แพ้ เอาเฉพาะที่แทงจริง)
           List<Bet> pendingBets = filteredBets.where((b) => b.status == 'Pending').toList();
-          List<Bet> wonBets = filteredBets.where((b) => b.status == 'Won').toList();
-          List<Bet> lostBets = filteredBets.where((b) => b.status == 'Lost').toList();
+          List<Bet> wonBets = filteredBets.where((b) => b.status == 'Won' && b.autoBetStatus == 'Executed').toList();
+          List<Bet> lostBets = filteredBets.where((b) => b.status == 'Lost' && b.autoBetStatus == 'Executed').toList();
 
           // เรียงตามเวลาล่าสุดในแต่ละกลุ่ม
           pendingBets.sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -272,7 +284,7 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
                                     color: Colors.white.withOpacity(0.02),
                                     child: Center(
                                       child: Text(
-                                        'กำลังแข่งขัน (${Formatters.formatNumber(pendingBets.length)} คู่)',
+                                        'กำลังแข่งขัน (${Formatters.formatNumber(filteredSignals.length)} คู่)',
                                         style: const TextStyle(
                                           fontSize: 20,
                                           fontWeight: FontWeight.bold,
@@ -285,15 +297,15 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
                                   Expanded(
                                     child: Row(
                                       children: [
-                                        _buildSubColumn(
-                                          title: 'ครึ่งแรก',
-                                          bets: pendingBets.where((b) => b.period == 'FH').toList(),
+                                        _buildSignalsSubColumn(
+                                          title: 'Live Signals',
+                                          signals: filteredSignals,
                                           titleColor: Colors.yellowAccent.withOpacity(0.8),
                                         ),
                                         const VerticalDivider(width: 1, color: Colors.white10),
                                         _buildSubColumn(
-                                          title: 'เต็มเวลา',
-                                          bets: pendingBets.where((b) => b.period != 'FH').toList(), // รวม FT ทั้งหมดเป็นเต็มเวลา
+                                          title: 'รอลุ้น',
+                                          bets: pendingBets,
                                           titleColor: Colors.orangeAccent,
                                         ),
                                       ],
@@ -499,6 +511,32 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
               itemCount: bets.length,
               itemBuilder: (context, index) => BetCard(
                 bet: bets[index],
+                runningNo: index + 1,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSignalsSubColumn({required String title, required List<Signal> signals, required Color titleColor}) {
+    return Expanded(
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8.0),
+            child: Text(
+              title,
+              style: TextStyle(color: titleColor, fontWeight: FontWeight.bold),
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              itemCount: signals.length,
+              itemBuilder: (context, index) => SignalCard(
+                signal: signals[index],
                 runningNo: index + 1,
               ),
             ),

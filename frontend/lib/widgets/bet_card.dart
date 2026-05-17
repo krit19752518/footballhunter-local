@@ -124,8 +124,20 @@ class BetCard extends StatelessWidget {
                 ),
               ],
             ),
-          ] else
-            const Text('สถานะ: กำลังแข่ง...', style: TextStyle(fontSize: 11, color: Colors.white38)),
+          ] else ...[
+            const Divider(color: Colors.white10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('สถานะ: กำลังแข่ง...', style: TextStyle(fontSize: 11, color: Colors.white38)),
+                if (bet.signal?.match?.matchTime != null || bet.signal?.matchTimeAtSignal != null)
+                  Text(
+                    "นาทีที่ ${bet.signal?.match?.matchTime ?? bet.signal?.matchTimeAtSignal}'",
+                    style: const TextStyle(fontSize: 11, color: Colors.greenAccent, fontWeight: FontWeight.bold),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
     );
