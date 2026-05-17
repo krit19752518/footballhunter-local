@@ -9,7 +9,7 @@ async function cleanDb() {
     await client.connect();
     
     // Check row counts
-    const tables = ['Match', 'Odds', 'OddsHistory', 'Signal', 'Bet'];
+    const tables = ['Match', 'Odds', 'OddsHistory', 'Signal', 'Bet', 'RealBetLog'];
     let totalRows = 0;
     
     console.log('--- Checking existing data ---');
@@ -27,7 +27,7 @@ async function cleanDb() {
     if (totalRows > 0) {
       console.log('\n--- Data found, proceeding to clear the database ---');
       // Truncate tables with CASCADE to handle foreign keys
-      await client.query(`TRUNCATE TABLE "Bet", "Signal", "OddsHistory", "Odds", "Match" CASCADE`);
+      await client.query(`TRUNCATE TABLE "Bet", "Signal", "OddsHistory", "Odds", "Match", "RealBetLog" CASCADE`);
       console.log('✅ All data has been successfully deleted.');
     } else {
       console.log('\n✅ Database is already empty. No data to delete.');
