@@ -98,6 +98,18 @@ app.get('/bets/history', async (req, res) => {
   }
 });
 
+
+app.get('/real-bets/history', async (req, res) => {
+  try {
+    const realBets = await prisma.realBetLog.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(realBets);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 app.get('/browser/status', (req, res) => {
   res.json({ isReady: BrowserService.getStatus() });
 });
@@ -127,7 +139,8 @@ app.post('/browser/test-bot', async (req, res) => {
       betSide,
       amount,
       targetLine,
-      true // isTest = true
+      true, // isTest = true
+      'test-task-id' // dummy taskId
     );
 
     res.json({ success: true, message: 'Test bot triggered', data: { leagueName, matchName, betSide, amount, targetLine } });

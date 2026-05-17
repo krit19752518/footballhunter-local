@@ -45,6 +45,17 @@ class ApiService {
     }
   }
 
+
+  static Future<List<RealBetLog>> getRealBetHistory() async {
+    final response = await http.get(Uri.parse('$baseUrl/real-bets/history'));
+    if (response.statusCode == 200) {
+      List jsonResponse = json.decode(response.body);
+      return jsonResponse.map((data) => RealBetLog.fromJson(data)).toList();
+    } else {
+      throw Exception('Failed to load real bet history');
+    }
+  }
+
   static Future<bool> getBrowserStatus() async {
     final response = await http.get(Uri.parse('$baseUrl/browser/status'));
     if (response.statusCode == 200) {

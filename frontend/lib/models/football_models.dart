@@ -166,3 +166,48 @@ class Bet {
     );
   }
 }
+
+
+class RealBetLog {
+  final String id;
+  final String? signalId;
+  final String matchName;
+  final String leagueName;
+  final String betSide;
+  final double? oddsAtBet;
+  final String? lineAtBet;
+  final double? amount;
+  final String status;
+  final String? errorMessage;
+  final DateTime createdAt;
+
+  RealBetLog({
+    required this.id,
+    this.signalId,
+    required this.matchName,
+    required this.leagueName,
+    required this.betSide,
+    this.oddsAtBet,
+    this.lineAtBet,
+    this.amount,
+    required this.status,
+    this.errorMessage,
+    required this.createdAt,
+  });
+
+  factory RealBetLog.fromJson(Map<String, dynamic> json) {
+    return RealBetLog(
+      id: json['id'],
+      signalId: json['signalId'],
+      matchName: json['matchName'],
+      leagueName: json['leagueName'],
+      betSide: json['betSide'],
+      oddsAtBet: json['oddsAtBet']?.toDouble(),
+      lineAtBet: json['lineAtBet'],
+      amount: json['amount']?.toDouble(),
+      status: json['status'],
+      errorMessage: json['errorMessage'],
+      createdAt: DateTime.parse(json['createdAt']),
+    );
+  }
+}

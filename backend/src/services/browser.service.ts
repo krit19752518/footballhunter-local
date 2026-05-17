@@ -186,7 +186,7 @@ export class BrowserService {
   }
 
   private static async executeTask(task: any) {
-    const { leagueName, matchName, betSide, amount, targetLine, isTest } = task;
+    const { leagueName, matchName, betSide, amount, targetLine, isTest, taskId } = task;
     const page: any = this.page;
 
       this.isProcessing = true;
@@ -196,6 +196,8 @@ export class BrowserService {
       const logWithStep = (msg: string) => {
         this.smartLog(`[Step ${step++}] ${msg}`, isTest);
       };
+
+      let finalOdds = 0.0;
 
       try {
         logWithStep(`🚀 Starting ${this.isTestRunning ? 'TEST' : 'REAL'} process for: ${matchName}`);
@@ -224,12 +226,10 @@ export class BrowserService {
       try {
         logWithStep(`🔍 Opening search tool for league: ${leagueName}`);
         await this.performSearch(page, leagueName);
-        // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
         if (this.stopTestRequested) throw new Error("Test Stopped by user");
         await page.waitForTimeout(2000); // ให้เวลาผลลัพธ์โหลด
       } catch (e: any) {
-        logWithStep(`❌ League Search Failed: ${e.message}`);
-        return;
+        throw new Error(`League Search Failed: ${e.message}`);
       }
 
       // 3. ค้นหาคู่บอลในผลลัพธ์ที่ปรากฏ (รอสูงสุด 5 วินาที)
@@ -274,18 +274,30 @@ export class BrowserService {
         
         // รอเช็คว่าหน้าเปลี่ยนจริงไหม (เช็คคำที่เป็นเอกลักษณ์ของหน้าราคา)
         let arrived = false;
-        for (let i = 0; i < 10; i++) { // เพิ่มเป็น 5 วินาที (10 * 500ms)
-            await page.waitForTimeout(500);
-            const isOddsPage = await page.locator('div, span').filter({ hasText: /^แฮนดิแคป & สูง\/ต่ำ$/ }).first().isVisible().catch(() => false);
+        for (let i = 0; i < 15; i++) { // เพิ่มเป็น ~10-12 วินาที
+            await page.waitForTimeout(800);
+            const isOddsPage = await page.locator('div, span').filter({ hasText: /แฮนดิแคป|สูง\/ต่ำ|Handicap|1x2|ไม่พบข้อมูลเป็นการชั่วคราว/ }).first().isVisible().catch(() => false);
             if (isOddsPage) {
                 arrived = true;
                 break;
             }
             await page.waitForTimeout(1000); // หน่วงเวลาเช็คหน้าเปลี่ยน
             // ถ้ายังไม่เปลี่ยนหน้า ลองใช้ JS Click ซ้ำที่ตัวแถว
-            if (i === 5) {
-                logWithStep(`[AUTO-BOT] ⚠️ Not moved yet, trying JS click fallback...`);
-                await matchRow.evaluate((el: HTMLElement) => el.click()).catch(() => {});
+            if (i % 5 === 0 && i > 0) { // ลอง JS Click ทุกๆ 5 รอบ
+                logWithStep(`[AUTO-BOT] ⚠️ Not moved yet, trying different click points...`);
+                // ลองคลิกหลายๆ จุด (ซ้าย, กลาง, ขวา)
+                await matchRow.evaluate((el: HTMLElement) => {
+                    el.click(); // คลิกปกติ
+                    const box = el.getBoundingClientRect();
+                    const event = new MouseEvent('click', { view: window, bubbles: true, cancelable: true, clientX: box.left + 20, clientY: box.top + 10 });
+                    el.dispatchEvent(event);
+                }).catch(() => {});
+            }
+            if (i === 12) { // ถ้ารอนานเกินไป (ประมาณ 15-20 วินาที) ให้ลอง Reload หน้าเว็บ
+                logWithStep(`[AUTO-BOT] 🚨 STUCK DETECTED! Force reloading page...`);
+                await page.reload().catch(() => {});
+                await page.waitForTimeout(5000); // รอหน้าโหลดใหม่
+                break; // ออกจาก Loop เพื่อให้งานนี้พังไป แล้วเริ่มงานใหม่จากหน้าหลัก
             }
         }
 
@@ -373,8 +385,10 @@ export class BrowserService {
                     }
 
                     if (targetBox) {
-                        logWithStep(`[AUTO-BOT] 🎯 Found matching price! Clicking...`);
-                        // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
+                        const oddsText = await targetBox.locator('._odds_1qbu6_57, [class*="odds"]').innerText().catch(() => "N/A");
+                        finalOdds = parseFloat(oddsText.replace(/[^0-9.]/g, '')) || 0.0;
+                        logWithStep(`[AUTO-BOT] 🎯 Found matching price! Odds: ${oddsText} (${finalOdds}). Clicking...`);
+                        
                         if (this.stopTestRequested) throw new Error("Test Stopped by user");
                         await targetBox.click({ force: true });
                         await page.waitForTimeout(2000); // หน่วงเวลา 2 วินาที
@@ -531,7 +545,6 @@ export class BrowserService {
 
                             if (betBtn) {
                                 logWithStep(`🚀 Clicking "Bet" (พนัน) button...`);
-                                // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
                                 if (this.stopTestRequested) throw new Error("Test Stopped by user");
                                 await betBtn.click({ force: true }).catch(async () => {
                                     await betBtn.evaluate((el: HTMLElement) => el.click());
@@ -540,56 +553,77 @@ export class BrowserService {
                                 logWithStep(`⏳ Waiting for bet confirmation (Success Screen)...`);
                                 await page.waitForTimeout(5000); 
                                 logWithStep(`✅ Betting process completed!`);
-                                 // --- ขั้นตอน Cleanup (ปิดหน้าต่างที่เบลอๆ) ---
-                                 logWithStep(`🧹 Cleaning up: Closing success dialog...`);
-                                 await page.evaluate(() => {
-                                     const masks = document.querySelectorAll('.ui-mask, .ui-overlay, ._mask_, .van-overlay');
-                                     masks.forEach((el: any) => { el.click(); setTimeout(() => el.remove(), 500); });
-                                     const event = new MouseEvent('click', { view: window, bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
-                                     document.body.dispatchEvent(event);
-                                 }).catch(() => {});
-                                 await page.waitForTimeout(1500);
+
+                                // Save successful real bet to db
+                                if (!isTest) {
+                                    await prisma.realBetLog.create({
+                                      data: {
+                                        signalId: taskId,
+                                        matchName,
+                                        leagueName,
+                                        betSide,
+                                        oddsAtBet: finalOdds,
+                                        amount: amount,
+                                        status: 'Executed'
+                                      }
+                                    }).catch((err: any) => this.smartLog(`[REAL-BET-LOG] Error: ${err.message}`));
+                                }
+
+                                // --- ขั้นตอน Cleanup (ปิดหน้าต่างที่เบลอๆ) ---
+                                logWithStep(`🧹 Cleaning up: Closing success dialog...`);
+                                await page.evaluate(() => {
+                                    const masks = document.querySelectorAll('.ui-mask, .ui-overlay, ._mask_, .van-overlay');
+                                    masks.forEach((el: any) => { el.click(); setTimeout(() => el.remove(), 500); });
+                                    const event = new MouseEvent('click', { view: window, bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
+                                    document.body.dispatchEvent(event);
+                                }).catch(() => {});
+                                await page.waitForTimeout(1500);
                             } else {
-                                logWithStep(`⚠️ Bet button (พนัน) not found. Closing cart...`);
                                 await cartIcon.evaluate((el: HTMLElement) => el.click()).catch(() => {});
+                                throw new Error(`Bet button (พนัน) not found.`);
                             }
                         } else {
-                            logWithStep(`[AUTO-BOT] ⚠️ Amount input field not found after waiting.`);
+                            throw new Error(`Amount input field not found after waiting.`);
                         }
 
                         // 6. ทำความสะอาดและกลับหน้าหลัก
                         await this.cleanupAndGoBack(page);
 
                     } else {
-                        logWithStep(`[AUTO-BOT] ❌ Price not found. Cleaning up...`);
-                        await this.cleanupAndGoBack(page);
+                        throw new Error(`Price not found.`);
                     }
                 } else {
-                    logWithStep(`[AUTO-BOT] ❌ Section "${sectionTitle}" not found. Cleaning up...`);
-                    await this.cleanupAndGoBack(page);
+                    throw new Error(`Section "${sectionTitle}" not found.`);
                 }
             } catch (e: any) {
-                logWithStep(`[AUTO-BOT] ⚠️ Error during price/cart selection: ${e.message}`);
-                await this.cleanupAndGoBack(page);
+                throw e;
             }
-
-            // สั่ง Pause ตัวเองเสมอหลังจากทำภารกิจเสร็จ (ถูกปิดใช้งานตามคำขอ)
-            // this.setReady(false);
         } else {
-            logWithStep(`[AUTO-BOT] ❌ Navigation failed. Still on Search Page.`);
             // พยายามล้างช่องค้นหาเพื่อเริ่มใหม่
             const clearBtn = page.locator('.ui-input__clear').first();
             if (await clearBtn.isVisible()) await clearBtn.click({ force: true }).catch(() => {});
-            // this.setReady(false);
+            throw new Error(`Navigation failed. Still on Search Page.`);
         }
       } else {
-        logWithStep(`[AUTO-BOT] ❌ Could not find match row in search results for "${homeKey}" vs "${awayKey}" after 5s.`);
-        await this.cleanupAndGoBack(page);
-        // this.setReady(false); // หยุด Auto-bot
+        throw new Error(`Could not find match row in search results for "${homeKey}" vs "${awayKey}" after 5s.`);
       }
 
     } catch (error: any) {
       logWithStep(`[AUTO-BOT] ❌ Process Error: ${error.message}`);
+      if (!isTest) {
+          await prisma.realBetLog.create({
+            data: {
+              signalId: taskId,
+              matchName,
+              leagueName,
+              betSide,
+              amount: amount,
+              status: 'Failed',
+              errorMessage: error.message
+            }
+          }).catch((err: any) => this.smartLog(`[REAL-BET-LOG] Failed write error: ${err.message}`));
+      }
+      await this.cleanupAndGoBack(page).catch(() => {});
     } finally {
       this.isProcessing = false;
     }
@@ -622,7 +656,7 @@ export class BrowserService {
     }
 
     // 1. คลิกลูกศรมุมบนซ้าย (Back Button)
-    const backBtn = page.locator('.lobby-base-header__back, .ui-arrow--left, [xlink\\:href="#ui-arrow-418a3a"]').first();
+    const backBtn = page.locator('.lobby-base-header__back, .ui-arrow--left, [xlink\\:href="#ui-arrow-418a3a"], .van-nav-bar__left, .van-icon-arrow-left, i[class*="arrow-left"], [class*="back-btn"], [class*="back"], .ui-icon-arrow-left').first();
     
     try {
         if (await backBtn.isVisible()) {
@@ -673,23 +707,32 @@ export class BrowserService {
         }
     }
     
+    
+    // 3. เช็คความชัวร์ว่ากลับมาหน้าหลักแล้วจริงๆ (มองหาปุ่มค้นหาหรือสัญลักษณ์หน้าหลัก)
+    const isMain = await page.locator('.icon-search, .search-icon, .fa-search, [class*="search"]').first().isVisible().catch(() => false);
+    if (!isMain) {
+        this.smartLog(`[AUTO-BOT] 🚨 Still not on main page after back. Force navigating...`);
+        await page.goto('https://www.bet5688q.com/home/sport/soccer', { waitUntil: 'networkidle', timeout: 10000 }).catch(() => {});
+        await page.waitForTimeout(3000);
+    }
+
     this.smartLog(`[AUTO-BOT] 🏁 Navigation cleanup finished. Ready for next task.`);
   }
 
-  static async findAndBet(leagueName: string, matchName: string, betSide: string, amount: number, targetLine?: string, isTest: boolean = false) {
+  static async findAndBet(leagueName: string, matchName: string, betSide: string, amount: number, targetLine?: string, isTest: boolean = false, taskId?: string) {
     // ถ้าไม่ใช่ Test และระบบไม่ Ready ให้ไม่รับงาน
     if (!isTest && !this.isReady) return;
 
     // เพิ่มงานเข้าคิวแทนการรันทันที
     this.smartLog(`[QUEUE] 📥 Added ${isTest ? 'TEST' : 'REAL'} signal to queue: ${matchName}`, isTest);
-    this.queue.push({ leagueName, matchName, betSide, amount, targetLine, isTest });
+    this.queue.push({ leagueName, matchName, betSide, amount, targetLine, isTest, taskId });
 
     // ตรวจสอบว่า Processor ทำงานหรือยัง
     this.startQueueProcessor(isTest);
   }
 
   private static async executeFullBetFlow(page: any, task: any) {
-    const { leagueName, matchName, betSide, amount, targetLine } = task;
+    const { leagueName, matchName, betSide, amount, targetLine, taskId } = task;
 
     try {
       // 0. ตรวจสอบว่าอยู่หน้า "ฟุตบอล" หรือยัง (ป้องกันการหลงไปหน้าบาสเกตบอล)
@@ -881,9 +924,55 @@ export class BrowserService {
         await page.waitForTimeout(1000);
         this.smartLog(`[AUTO-BET] ✅ Success! "${betSide}" (${oddsText}) added to cart.`);
 
-        // บันทึก Log การแทงจริงลงฐานข้อมูล
+        // --- เพิ่มส่วนการกรอกเงินและกดแทงจริง ---
+        this.smartLog(`[AUTO-BET] 🛒 Opening cart slip...`);
+        const cartIcon = page.locator('[class*="sport-bet-cart-classname"], [class*="_bet-cart_"], i[data-src*="icon_ty_floatbtn.svg"]').first();
+        await cartIcon.click({ force: true }).catch(() => cartIcon.evaluate((el: HTMLElement) => el.click()));
+        await page.waitForTimeout(1500);
+
+        const slipInput = page.locator('input.ui-input__input, [class*="_input-box_"] input, .van-field__control').first();
+        if (await slipInput.isVisible({ timeout: 5000 })) {
+            this.smartLog(`[AUTO-BET] 🔢 Entering amount: ${amount}`);
+            await slipInput.click({ force: true }).catch(() => {});
+            
+            // ใช้ Keyboard Type ตรงๆ เพื่อความเสถียรในโหมด Real
+            await page.keyboard.type(amount.toString(), { delay: 100 });
+            await page.waitForTimeout(1000);
+
+            // คลิกปุ่ม "พนัน" (Confirm Bet)
+            let betBtn: any = null;
+            this.smartLog(`[AUTO-BET] 🔍 Waiting for "Bet" (พนัน) button...`);
+            for (let r = 0; r < 20; r++) {
+                const btn = page.locator('button, div, span').filter({ hasText: /^พนัน/ }).first();
+                if (await btn.isVisible()) {
+                    const isDisabled = await btn.getAttribute('disabled');
+                    if (isDisabled === null) { betBtn = btn; break; }
+                }
+                await page.waitForTimeout(500);
+            }
+
+            if (betBtn) {
+                this.smartLog(`[AUTO-BET] 🚀 Clicking "Bet" (พนัน) button!`);
+                await betBtn.click({ force: true }).catch(() => betBtn.evaluate((el: HTMLElement) => el.click()));
+                
+                await page.waitForTimeout(5000); // รอ Success Screen
+                
+                // Cleanup: ปิดหน้าต่าง
+                this.smartLog(`[AUTO-BET] 🧹 Cleaning up success dialog...`);
+                await page.evaluate(() => {
+                    const masks = document.querySelectorAll('.ui-mask, .ui-overlay, ._mask_, .van-overlay');
+                    masks.forEach((el: any) => { el.click(); setTimeout(() => el.remove(), 500); });
+                    const event = new MouseEvent('click', { view: window, bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
+                    document.body.dispatchEvent(event);
+                }).catch(() => {});
+                await page.waitForTimeout(1500);
+            }
+        }
+        // ------------------------------------------
+
         await prisma.realBetLog.create({
           data: {
+            signalId: taskId,
             matchName,
             leagueName,
             betSide,
@@ -893,6 +982,7 @@ export class BrowserService {
           }
         }).catch((err: any) => this.smartLog(`[REAL-BET-LOG] Error: ${err.message}`));
 
+        await this.cleanupAndGoBack(page);
         return;
       } else {
         this.smartLog(`[AUTO-BET] ❌ ERROR: Could not find bet box at column ${columnIndex} in block ${rowIndex}.`);
@@ -903,6 +993,7 @@ export class BrowserService {
       // บันทึก Log กรณีล้มเหลว
       await prisma.realBetLog.create({
         data: {
+          signalId: taskId,
           matchName,
           leagueName,
           betSide,
@@ -954,7 +1045,7 @@ export class BrowserService {
     }
 
     // รอให้หน้าต่างค้นหา (Modal) โผล่ขึ้นมา
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(4000); // เพิ่มเวลารอ Modal
 
     // 2. รอและกรอกชื่อลีก
     try {
@@ -971,7 +1062,7 @@ export class BrowserService {
       for (const selector of inputSelectors) {
           try {
               const input = page.locator(selector).first();
-              if (await input.isVisible({ timeout: 1500 })) {
+              if (await input.isVisible({ timeout: 3000 })) {
                   this.smartLog(`[AUTO-BET] Found search input via: ${selector}`);
                   await input.fill(''); // ล้างค่าเก่า
                   await input.fill(leagueName);

@@ -30,8 +30,8 @@ export class SignalService {
 
     const diff = (oldest.homeOdds || 0) - (current.homeOdds || 0);
 
-    // ถ้าราคาไหลลงเกิน 0.05 (ปรับให้ไวขึ้นตามคำขอ)
-    if (diff >= 0.05) {
+    // ถ้าราคาไหลลงเกิน 0.03 (ปรับให้สัญญาณออกถี่ขึ้นเพื่อเทสระบบตามคำขอ)
+    if (diff >= 0.03) {
       const reversedOdds = current.awayOdds || 1.8;
       const betSide = match.awayTeam;
       await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `📈 ต่อไหลแรง: ${match.homeTeam} ราคาลดเหลือ ${current.homeOdds} (ไหลลง ${diff.toFixed(2)}) 🔥 วางเดิมพัน ${betSide}`, reversedOdds, odds.line, betSide, odds.type);
@@ -176,7 +176,7 @@ export class SignalService {
       if (BrowserService.getStatus()) {
         botLog(`[AUTO-BET] Calling BrowserService.findAndBet for ${match.name}...`);
         try {
-          await BrowserService.findAndBet(match.leagueName, match.name, betSide, 10, lineAtBet);
+          await BrowserService.findAndBet(match.leagueName, match.name, betSide, 10, lineAtBet, false, signal.id);
           await prisma.bet.update({
             where: { id: bet.id },
             data: { autoBetStatus: 'Executed' }

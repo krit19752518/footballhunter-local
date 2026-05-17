@@ -1,117 +1,73 @@
-import 'package:flutter/material.dart';
-import '../models/football_models.dart';
-import '../services/api_service.dart';
-import '../utils/formatters.dart';
-import '../widgets/bet_card.dart';
 
-class BetHistoryScreen extends StatefulWidget {
-  const BetHistoryScreen({super.key});
+import re
+import os
 
-  @override
-  State<BetHistoryScreen> createState() => _BetHistoryScreenState();
-}
+screen_path = r'c:\FootballHunter2\frontend\lib\screens\bet_history_screen.dart'
 
-class _BetHistoryScreenState extends State<BetHistoryScreen> {
-  DateTimeRange? _selectedDateRange;
-  late Future<List<Bet>> _betsFuture;
-  late Future<List<RealBetLog>> _realBetsFuture;
+with open(screen_path, 'r', encoding='utf-8') as f:
+    code = f.read()
 
-  @override
-  void initState() {
-    super.initState();
-    _betsFuture = ApiService.getBetHistory();
-                _realBetsFuture = ApiService.getRealBetHistory();
-  }
+# 1. Add _realBetsFuture to state
+code = code.replace(
+    'late Future<List<Bet>> _betsFuture;',
+    'late Future<List<Bet>> _betsFuture;\n  late Future<List<RealBetLog>> _realBetsFuture;'
+)
 
-  Future<void> _selectDateRange() async {
-    final DateTimeRange? picked = await showDateRangePicker(
-      context: context,
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(const Duration(days: 1)),
-      initialDateRange: _selectedDateRange,
-    );
+code = code.replace(
+    '_betsFuture = ApiService.getBetHistory();',
+    '_betsFuture = ApiService.getBetHistory();\n    _realBetsFuture = ApiService.getRealBetHistory();'
+)
 
-    if (picked != null && picked != _selectedDateRange) {
-      setState(() {
-        _selectedDateRange = picked;
-      });
-    }
-  }
+code = code.replace(
+    '_betsFuture = ApiService.getBetHistory();',
+    '_betsFuture = ApiService.getBetHistory();\n                _realBetsFuture = ApiService.getRealBetHistory();'
+)
 
-  void _clearDateRange() {
-    setState(() {
-      _selectedDateRange = null;
-    });
-  }
+# Fix duplicate initialization if any
+code = re.sub(r'(_realBetsFuture = ApiService\.getRealBetHistory\(\);\n\s*){2,}', r'\1', code)
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0F172A),
-      appBar: AppBar(
-        title: const Text('สรุปผลการเดิมพัน', style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: const Color(0xFF1E293B),
-        actions: [
-          if (_selectedDateRange != null)
-            IconButton(
-              icon: const Icon(Icons.clear, color: Colors.redAccent),
-              tooltip: 'ล้างตัวกรองวันที่',
-              onPressed: _clearDateRange,
-            ),
-          IconButton(
-            icon: const Icon(Icons.date_range),
-            tooltip: 'เลือกช่วงวันที่',
-            onPressed: _selectDateRange,
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () {
-              setState(() {
-                _betsFuture = ApiService.getBetHistory();
-                _realBetsFuture = ApiService.getRealBetHistory();
-              });
-            },
-          ),
-        ],
-      ),
-      body: FutureBuilder<List<dynamic>>(
-        future: Future.wait([_betsFuture, _realBetsFuture]),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.white)));
-          }
 
-          List<Bet> allBets = snapshot.data?[0] ?? [];
-          List<RealBetLog> allRealBets = snapshot.data?[1] ?? [];
-          
-          // กรองข้อมูลตามช่วงวันที่เลือก
-          List<Bet> filteredBets = allBets;
-          if (_selectedDateRange != null) {
-            final start = _selectedDateRange!.start;
-            final end = _selectedDateRange!.end.add(const Duration(hours: 23, minutes: 59, seconds: 59));
-            filteredBets = allBets.where((bet) {
-              return bet.createdAt.isAfter(start) && bet.createdAt.isBefore(end);
-            }).toList();
-          }
+# 2. Change FutureBuilder to handle both futures
+code = code.replace(
+    'body: FutureBuilder<List<Bet>>(',
+    'body: FutureBuilder<List<dynamic>>('
+)
 
-          // กรองข้อมูลตามสถานะ
-          List<Bet> pendingBets = filteredBets.where((b) => b.status == 'Pending').toList();
-          List<Bet> wonBets = filteredBets.where((b) => b.status == 'Won').toList();
-          List<Bet> lostBets = filteredBets.where((b) => b.status == 'Lost').toList();
+code = code.replace(
+    'future: _betsFuture,',
+    'future: Future.wait([_betsFuture, _realBetsFuture]),'
+)
 
-          // เรียงตามเวลาล่าสุดในแต่ละกลุ่ม
-          pendingBets.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-          wonBets.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-          lostBets.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+code = code.replace(
+    'List<Bet> allBets = snapshot.data ?? [];',
+    '''List<Bet> allBets = snapshot.data?[0] ?? [];
+          List<RealBetLog> allRealBets = snapshot.data?[1] ?? [];'''
+)
 
-          if (filteredBets.isEmpty) {
-            return const Center(child: Text('ไม่พบข้อมูลการเดิมพันในช่วงเวลาที่เลือก', style: TextStyle(color: Colors.white70)));
-          }
+# 3. Add realBets filtering and stat calculation
+target_stat_calc = '''          // คำนวณสถิติ
+          double totalBetAmount = 0;
+          double totalWonAmount = 0;
+          double netProfit = 0;
+          int winCount = 0;
+          int loseCount = 0;
+          int pendingCount = 0;
 
-          // คำนวณสถิติ Mock Bot
+          for (var bet in filteredBets) {
+            totalBetAmount += bet.amount;
+            netProfit += (bet.netProfit ?? 0);
+            
+            if (bet.status == 'Won') {
+              winCount++;
+              totalWonAmount += bet.amount + (bet.netProfit ?? 0);
+            } else if (bet.status == 'Lost') {
+              loseCount++;
+            } else if (bet.status == 'Pending') {
+              pendingCount++;
+            }
+          }'''
+
+replacement_stat_calc = '''          // คำนวณสถิติ Mock Bot
           double totalBetAmount = 0;
           double totalWonAmount = 0;
           double netProfit = 0;
@@ -176,11 +132,21 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
               }
             }
           }
+'''
+code = code.replace(target_stat_calc, replacement_stat_calc)
 
+# 4. Update _buildSummaryBoard method signature and call
+target_board_call = '''              _buildSummaryBoard(
+                totalBets: filteredBets.length,
+                totalBetAmount: totalBetAmount,
+                totalWonAmount: totalWonAmount,
+                netProfit: netProfit,
+                winCount: winCount,
+                loseCount: loseCount,
+                pendingCount: pendingCount,
+              ),'''
 
-          return Column(
-            children: [
-              _buildSummaryBoard(
+replacement_board_call = '''              _buildSummaryBoard(
                 totalBets: filteredBets.length,
                 totalBetAmount: totalBetAmount,
                 totalWonAmount: totalWonAmount,
@@ -194,78 +160,16 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
                 realLoseCount: realLoseCount,
                 realPendingCount: realPendingCount,
                 realNetProfit: realNetProfit,
-              ),
-              Expanded(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // คอลัมน์กำลังแข่งขัน (แยกครึ่งแรก/ครึ่งหลัง)
-                    Expanded(
-                      flex: 2, // ขยายพื้นที่ให้กว้างขึ้นสำหรับ 2 คอลัมน์ย่อย
-                      child: Container(
-                        decoration: const BoxDecoration(
-                          border: Border(right: BorderSide(color: Colors.white10)),
-                        ),
-                        child: Column(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              width: double.infinity,
-                              color: Colors.white.withOpacity(0.02),
-                              child: Center(
-                                child: Text(
-                                  'กำลังแข่งขัน (${Formatters.formatNumber(pendingBets.length)} คู่)',
-                                  style: const TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.yellowAccent,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const Divider(height: 1, color: Colors.white10),
-                            Expanded(
-                              child: Row(
-                                children: [
-                                  _buildSubColumn(
-                                    title: 'ครึ่งแรก',
-                                    bets: pendingBets.where((b) => b.period == 'FH').toList(),
-                                    titleColor: Colors.yellowAccent.withOpacity(0.8),
-                                  ),
-                                  const VerticalDivider(width: 1, color: Colors.white10),
-                                  _buildSubColumn(
-                                    title: 'เต็มเวลา',
-                                    bets: pendingBets.where((b) => b.period != 'FH').toList(), // รวม FT ทั้งหมดเป็นเต็มเวลา
-                                    titleColor: Colors.orangeAccent,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    _buildColumn(
-                      title: 'ชนะ (${Formatters.formatNumber(wonBets.length)} คู่)',
-                      bets: wonBets,
-                      titleColor: Colors.greenAccent,
-                    ),
-                    _buildColumn(
-                      title: 'แพ้ (${Formatters.formatNumber(lostBets.length)} คู่)',
-                      bets: lostBets,
-                      titleColor: Colors.redAccent,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
+              ),'''
+code = code.replace(target_board_call, replacement_board_call)
 
-  Widget _buildSummaryBoard({
+# 5. Redesign _buildSummaryBoard
+# Use regex to replace the entire _buildSummaryBoard function block up to its end.
+# We will just find the start of Widget _buildSummaryBoard and replace it.
+board_func_start_idx = code.find('Widget _buildSummaryBoard({')
+board_func_end_idx = code.find('Widget _buildStatItem(', board_func_start_idx)
+
+new_board_func = '''Widget _buildSummaryBoard({
     required int totalBets,
     required double totalBetAmount,
     required double totalWonAmount,
@@ -414,79 +318,12 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
     );
   }
 
-  Widget _buildStatItem(String label, String value, Color valueColor) {
-    return Column(
-      children: [
-        Text(label, style: const TextStyle(fontSize: 12, color: Colors.white54)),
-        const SizedBox(height: 4),
-        Text(value, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: valueColor)),
-      ],
-    );
-  }
+  '''
 
-  Widget _buildSubColumn({required String title, required List<Bet> bets, required Color titleColor}) {
-    return Expanded(
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8.0),
-            child: Text(
-              title,
-              style: TextStyle(color: titleColor, fontWeight: FontWeight.bold),
-            ),
-          ),
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              itemCount: bets.length,
-              itemBuilder: (context, index) => BetCard(
-                bet: bets[index],
-                runningNo: index + 1,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+if board_func_start_idx != -1 and board_func_end_idx != -1:
+    code = code[:board_func_start_idx] + new_board_func + code[board_func_end_idx:]
 
-  Widget _buildColumn({required String title, required List<Bet> bets, required Color titleColor}) {
-    return Expanded(
-      child: Container(
-        decoration: const BoxDecoration(
-          border: Border(right: BorderSide(color: Colors.white10)),
-        ),
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              width: double.infinity,
-              color: Colors.white.withOpacity(0.02),
-              child: Center(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: titleColor,
-                  ),
-                ),
-              ),
-            ),
-            const Divider(height: 1, color: Colors.white10),
-            Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.all(12),
-                itemCount: bets.length,
-                itemBuilder: (context, index) => BetCard(
-                  bet: bets[index],
-                  runningNo: index + 1,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+with open(screen_path, 'w', encoding='utf-8') as f:
+    f.write(code)
+
+print("bet_history_screen.dart updated successfully!")
