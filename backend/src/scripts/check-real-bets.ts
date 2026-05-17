@@ -12,7 +12,14 @@ async function main() {
   console.log("\\nChecking Bet records with autoBetStatus = 'Executed'...");
   const executedBets = await prisma.bet.findMany({
     where: { autoBetStatus: 'Executed' },
-    take: 5,
+    include: {
+      signal: {
+        include: {
+          match: true
+        }
+      }
+    },
+    take: 3,
     orderBy: { createdAt: 'desc' }
   });
   console.log(JSON.stringify(executedBets, null, 2));

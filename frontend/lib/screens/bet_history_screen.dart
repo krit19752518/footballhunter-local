@@ -96,6 +96,7 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
           // กรองข้อมูลตามช่วงวันที่เลือก
           List<Bet> filteredBets = allBets;
           List<Signal> filteredSignals = allSignals;
+          List<RealBetLog> filteredRealBets = allRealBets;
           if (_selectedDateRange != null) {
             final start = _selectedDateRange!.start;
             final end = _selectedDateRange!.end.add(const Duration(hours: 23, minutes: 59, seconds: 59));
@@ -104,6 +105,9 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
             }).toList();
             filteredSignals = allSignals.where((sig) {
               return sig.createdAt.isAfter(start) && sig.createdAt.isBefore(end);
+            }).toList();
+            filteredRealBets = allRealBets.where((bet) {
+              return bet.createdAt.isAfter(start) && bet.createdAt.isBefore(end);
             }).toList();
           }
 
@@ -120,8 +124,8 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
           wonBets.sort((a, b) => b.createdAt.compareTo(a.createdAt));
           lostBets.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-          if (filteredBets.isEmpty) {
-            return const Center(child: Text('ไม่พบข้อมูลการเดิมพันในช่วงเวลาที่เลือก', style: TextStyle(color: Colors.white70)));
+          if (filteredBets.isEmpty && filteredSignals.isEmpty && filteredRealBets.isEmpty) {
+            return const Center(child: Text('ไม่พบข้อมูลในช่วงเวลาที่เลือก', style: TextStyle(color: Colors.white70)));
           }
 
           // คำนวณสถิติ Mock Bot
@@ -147,14 +151,6 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
           }
 
           // คำนวณสถิติ Real Bot
-          List<RealBetLog> filteredRealBets = allRealBets;
-          if (_selectedDateRange != null) {
-            final start = _selectedDateRange!.start;
-            final end = _selectedDateRange!.end.add(const Duration(hours: 23, minutes: 59, seconds: 59));
-            filteredRealBets = allRealBets.where((bet) {
-              return bet.createdAt.isAfter(start) && bet.createdAt.isBefore(end);
-            }).toList();
-          }
 
           int realTotalBets = 0;
           double realTotalBetAmount = 0;
@@ -298,13 +294,13 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
                                     child: Row(
                                       children: [
                                         _buildSignalsSubColumn(
-                                          title: 'Live Signals',
+                                          title: 'Signals (${filteredSignals.length})',
                                           signals: filteredSignals,
                                           titleColor: Colors.yellowAccent.withOpacity(0.8),
                                         ),
                                         const VerticalDivider(width: 1, color: Colors.white10),
                                         _buildSubColumn(
-                                          title: 'รอลุ้น',
+                                          title: 'รอลุ้น (${pendingBets.length})',
                                           bets: pendingBets,
                                           titleColor: Colors.orangeAccent,
                                         ),

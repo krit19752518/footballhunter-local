@@ -130,9 +130,10 @@ class BetCard extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text('สถานะ: กำลังแข่ง...', style: TextStyle(fontSize: 11, color: Colors.white38)),
-                if (bet.signal?.match?.matchTime != null || bet.signal?.matchTimeAtSignal != null)
+                if ((bet.signal?.match?.matchTime != null && bet.signal!.match!.matchTime!.trim().isNotEmpty) ||
+                    (bet.signal?.matchTimeAtSignal != null && bet.signal!.matchTimeAtSignal!.trim().isNotEmpty))
                   Text(
-                    "นาทีที่ ${bet.signal?.match?.matchTime ?? bet.signal?.matchTimeAtSignal}'",
+                    "นาทีที่ ${bet.signal?.match?.matchTime?.trim().isNotEmpty == true ? bet.signal?.match?.matchTime : bet.signal?.matchTimeAtSignal}'",
                     style: const TextStyle(fontSize: 11, color: Colors.greenAccent, fontWeight: FontWeight.bold),
                   ),
               ],
