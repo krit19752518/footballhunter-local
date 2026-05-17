@@ -169,13 +169,17 @@ export class BrowserService {
       this.smartLog(`[QUEUE] 🎯 Found ${nextTask.isTest ? 'TEST' : 'REAL'} task! Pulling from queue...`, nextTask.isTest);
       const task = this.queue.shift();
 
-      // เช็คว่าเป็นหน้าหลัก (มีรายการบอล) หรือหน้าค้นหา (ที่มีปุ่มกากบาทปิด)
+      // เช็คว่าเป็นหน้าหลัก (มีรายการบอล) หรือหน้าค้นหา (ที่มีปุ่มกากบาทปิด) หรือหน้ากีฬาฟุตบอลจากการตรวจ URL
       const isMainPage = await page.locator('._right-icon_j2hkn_82').first().isVisible().catch(() => false);
       const isSearchPage = await page.locator('.ui-input__clear').first().isVisible().catch(() => false);
+      const currentUrl = page.url();
+      const isSportsUrl = currentUrl.includes('/sport/') || currentUrl.includes('/soccer');
       
-      if (!isMainPage && !isSearchPage) {
-        this.smartLog(`[QUEUE] ⚠️ Not on a valid betting page. Re-queueing task...`);
+      if (!isMainPage && !isSearchPage && !isSportsUrl) {
+        this.smartLog(`[QUEUE] ⚠️ Not on a valid betting page (URL: ${currentUrl}). Force navigating to Sports page...`);
         if (task) this.queue.unshift(task);
+        await page.goto('https://www.bet5688q.com/home/sport/soccer', { waitUntil: 'networkidle', timeout: 15000 }).catch(() => {});
+        await page.waitForTimeout(5000); // รอให้หน้าเว็บโหลดและเสถียร
         return;
       }
 
@@ -202,6 +206,10 @@ export class BrowserService {
       try {
         logWithStep(`🚀 Starting ${this.isTestRunning ? 'TEST' : 'REAL'} process for: ${matchName}`);
 
+        // หน่วงเวลาเตรียมความพร้อมก่อนเริ่มต้นการทำงานจริง (Stabilization Delay)
+        logWithStep(`💤 Waiting 3s for page layout to stabilize before starting...`);
+        await page.waitForTimeout(3000);
+
         // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
         if (this.stopTestRequested) throw new Error("Test Stopped by user");
 
@@ -227,7 +235,7 @@ export class BrowserService {
         logWithStep(`🔍 Opening search tool for league: ${leagueName}`);
         await this.performSearch(page, leagueName);
         if (this.stopTestRequested) throw new Error("Test Stopped by user");
-        await page.waitForTimeout(2000); // ให้เวลาผลลัพธ์โหลด
+        await page.waitForTimeout(3000); // ให้เวลาผลลัพธ์โหลด
       } catch (e: any) {
         throw new Error(`League Search Failed: ${e.message}`);
       }
@@ -237,7 +245,7 @@ export class BrowserService {
       let matchRow: any = null;
       let found = false;
 
-      for (let retry = 0; retry < 10; retry++) { // 10 รอบ รอบละ 500ms = 5 วินาที
+      for (let retry = 0; retry < 10; retry++) { // 10 รอบ รอบละ 1s = 10 วินาที
           const possibleRows = page.locator('div, li, a').filter({ hasText: homeKey }).filter({ hasText: awayKey });
           const count = await possibleRows.count();
           
@@ -254,7 +262,7 @@ export class BrowserService {
           }
           
           if (found) break;
-          await page.waitForTimeout(500);
+          await page.waitForTimeout(1000); // เพิ่มเป็น 1 วินาที
       }
 
       if (matchRow) {
@@ -262,7 +270,7 @@ export class BrowserService {
         // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
         if (this.stopTestRequested) throw new Error("Test Stopped by user");
         await matchRow.scrollIntoViewIfNeeded().catch(() => {});
-        await page.waitForTimeout(2000); // หน่วงเวลา 2 วินาทีตามขอ
+        await page.waitForTimeout(3000); // หน่วงเวลาเพิ่มเป็น 3 วินาทีตามขอ
 
         // พยายามคลิกจุดกึ่งกลางของแถว หรือหาปุ่ม/ลิงก์ภายใน
         const clickTargets = matchRow.locator('div[class*="_center_"], .match-link, a, .team-name').first();
@@ -275,13 +283,13 @@ export class BrowserService {
         // รอเช็คว่าหน้าเปลี่ยนจริงไหม (เช็คคำที่เป็นเอกลักษณ์ของหน้าราคา)
         let arrived = false;
         for (let i = 0; i < 15; i++) { // เพิ่มเป็น ~10-12 วินาที
-            await page.waitForTimeout(800);
+            await page.waitForTimeout(1500); // เพิ่มจาก 800ms เป็น 1500ms
             const isOddsPage = await page.locator('div, span').filter({ hasText: /แฮนดิแคป|สูง\/ต่ำ|Handicap|1x2|ไม่พบข้อมูลเป็นการชั่วคราว/ }).first().isVisible().catch(() => false);
             if (isOddsPage) {
                 arrived = true;
                 break;
             }
-            await page.waitForTimeout(1000); // หน่วงเวลาเช็คหน้าเปลี่ยน
+            await page.waitForTimeout(1500); // เพิ่มจาก 1000ms เป็น 1500ms
             // ถ้ายังไม่เปลี่ยนหน้า ลองใช้ JS Click ซ้ำที่ตัวแถว
             if (i % 5 === 0 && i > 0) { // ลอง JS Click ทุกๆ 5 รอบ
                 logWithStep(`[AUTO-BOT] ⚠️ Not moved yet, trying different click points...`);
@@ -296,14 +304,14 @@ export class BrowserService {
             if (i === 12) { // ถ้ารอนานเกินไป (ประมาณ 15-20 วินาที) ให้ลอง Reload หน้าเว็บ
                 logWithStep(`[AUTO-BOT] 🚨 STUCK DETECTED! Force reloading page...`);
                 await page.reload().catch(() => {});
-                await page.waitForTimeout(5000); // รอหน้าโหลดใหม่
+                await page.waitForTimeout(6000); // รอหน้าโหลดใหม่เพิ่มเป็น 6 วินาที
                 break; // ออกจาก Loop เพื่อให้งานนี้พังไป แล้วเริ่มงานใหม่จากหน้าหลัก
             }
         }
 
         if (arrived) {
-            logWithStep(`🚩 Arrived at Odds Page. Waiting 3s for stabilization...`);
-            await page.waitForTimeout(3000); // รอให้ราคาและหน้าจอรีเฟรชจนนิ่ง
+            logWithStep(`🚩 Arrived at Odds Page. Waiting 5s for stabilization...`);
+            await page.waitForTimeout(5000); // หน่วงเวลาเพิ่มเป็น 5 วินาที
             const formattedPrice = BrowserService.formatLine(targetLine || "0");
             logWithStep(`🔍 Searching for price: ${formattedPrice}`);
             
@@ -335,7 +343,7 @@ export class BrowserService {
                     }
                     
                     if (targetSection) break;
-                    await page.waitForTimeout(1000); // รอ 1 วินาทีก่อนลองใหม่
+                    await page.waitForTimeout(1500); // เพิ่มเป็น 1.5 วินาที
                 }
 
                 if (targetSection) {
@@ -391,7 +399,7 @@ export class BrowserService {
                         
                         if (this.stopTestRequested) throw new Error("Test Stopped by user");
                         await targetBox.click({ force: true });
-                        await page.waitForTimeout(2000); // หน่วงเวลา 2 วินาที
+                        await page.waitForTimeout(3000); // หน่วงเวลาเพิ่มเป็น 3 วินาที
 
                         logWithStep(`[AUTO-BOT] 🛒 Checking if Bet Slip is already open...`);
                         const amountInput = page.locator('._option_wlp6f_80, ._stake-container_15log_45, ._container_15log_69, .ui-input__input').first();
@@ -426,7 +434,7 @@ export class BrowserService {
                                     await cartIcon.evaluate((el: HTMLElement) => el.click()).catch(() => {});
                                 });
                                 
-                                await page.waitForTimeout(1000);
+                                await page.waitForTimeout(2000); // เพิ่มเป็น 2 วินาที
                                 
                                 // ถ้ายังไม่เปิด ลองคลิกที่พิกัด (ตระกร้าสีเหลืองมักอยู่ขวาล่าง หรือข้างๆ ราคา)
                                 if (!(await amountInput.isVisible())) {
@@ -436,7 +444,7 @@ export class BrowserService {
                                         await page.mouse.click(box.x + box.width/2, box.y + box.height/2);
                                     }
                                 }
-                                await page.waitForTimeout(2000); 
+                                await page.waitForTimeout(3000); // เพิ่มเป็น 3 วินาที
                             } else {
                                 logWithStep(`⚠️ Cart icon not found after waiting.`);
                             }
@@ -459,14 +467,14 @@ export class BrowserService {
                         if (await slipInput.isVisible()) {
                             logWithStep(`[AUTO-BOT] ✅ Bet Slip opened. Starting amount entry...`);
                             await slipInput.click({ force: true });
-                            await page.waitForTimeout(1500); 
+                            await page.waitForTimeout(2000); // เพิ่มเป็น 2 วินาที
 
                             // 2. กดเลข 1 และเลข 0 บน Keyboard/Keypad
                             logWithStep(`🔢 Typing "1" and "0" via keypad...`);
                             
                             // คลิกช่อง Input เพื่อความมั่นใจ
                             await slipInput.click({ force: true }).catch(() => {});
-                            await page.waitForTimeout(800);
+                            await page.waitForTimeout(2000); // เพิ่มเป็น 2 วินาที
 
                             // หา Container ของคีย์บอร์ด (รองรับทั้ง keypad และ keyboard)
                             const keypad = page.locator('.van-keypad, .ui-keypad, [class*="keypad"], [class*="keyboard"]').first();
@@ -485,10 +493,10 @@ export class BrowserService {
                                     
                                     if (await btn1.isVisible()) {
                                         await btn1.click({ force: true });
-                                        await page.waitForTimeout(500);
+                                        await page.waitForTimeout(1000); // หน่วง 1 วินาที
                                         if (await btn0.isVisible()) {
                                             await btn0.click({ force: true });
-                                            await page.waitForTimeout(500);
+                                            await page.waitForTimeout(1000); // หน่วง 1 วินาที
                                         }
                                     } else {
                                         logWithStep(`⚠️ Buttons 1/0 not visible in keyboard, trying manual type...`);
@@ -503,7 +511,7 @@ export class BrowserService {
                                 await page.keyboard.type("10", { delay: 100 });
                             }
                             
-                            await page.waitForTimeout(1000); 
+                            await page.waitForTimeout(2000); // เพิ่มเป็น 2 วินาที
 
                             // ตรวจสอบว่าเงินเข้าไหม (ถ้าหา value ได้)
                             const currentVal = await slipInput.innerText().catch(() => "");
@@ -520,12 +528,12 @@ export class BrowserService {
                             if (this.isTestRunning) {
                                 // await this.waitStep(...); // Removed for Full-Auto
                             } else {
-                                await page.waitForTimeout(1000);
+                                await page.waitForTimeout(2000); // เพิ่มเป็น 2 วินาที
                             }
                             if (this.stopTestRequested) throw new Error("Test Stopped by user");
                             // ==========================================
 
-                            await page.waitForTimeout(1500); 
+                            await page.waitForTimeout(2000); 
 
                             // 3. คลิกปุ่ม "พนัน" (Confirm Bet)
                             let betBtn: any = null;
@@ -659,7 +667,7 @@ export class BrowserService {
         document.body.dispatchEvent(event);
     }).catch(() => {});
     
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(2000); // เพิ่มเป็น 2 วินาที
 
     const currentUrl = page.url();
     if (currentUrl.includes('/home/mine')) {
@@ -687,7 +695,7 @@ export class BrowserService {
     }
     
     // รอให้หน้าจอเปลี่ยนและ Popup เริ่มโหลด
-    await page.waitForTimeout(2500);
+    await page.waitForTimeout(4000); // เพิ่มเป็น 4 วินาที
 
     // 2. ปิด Popup ถ้ามี (ทำ 2 รอบ)
     this.smartLog(`[AUTO-BOT] ✖️ Checking for popups (2 rounds)...`);
@@ -706,14 +714,14 @@ export class BrowserService {
             await closeBtn.waitFor({ state: 'visible', timeout: 2000 });
             this.smartLog(`[AUTO-BOT] ✖️ Popup detected. Closing round ${i+1}...`);
             await closeBtn.click({ force: true }).catch(() => {});
-            await page.waitForTimeout(2000); 
+            await page.waitForTimeout(3000); 
         } catch (e) {
             // ลองเช็คปุ่ม X ทั่วไป
             const svgClose = page.locator('svg, i, div').filter({ hasText: /^x$/i }).first();
             if (await svgClose.isVisible()) {
                 this.smartLog(`[AUTO-BOT] ✖️ Finding generic X button...`);
                 await svgClose.click({ force: true }).catch(() => {});
-                await page.waitForTimeout(2000);
+                await page.waitForTimeout(3000); // เพิ่มเป็น 3 วินาที
             } else {
                 this.smartLog(`[AUTO-BOT] 💤 No popup detected in round ${i+1}.`);
             }
@@ -726,7 +734,7 @@ export class BrowserService {
     if (!isMain) {
         this.smartLog(`[AUTO-BOT] 🚨 Still not on main page after back. Force navigating...`);
         await page.goto('https://www.bet5688q.com/home/sport/soccer', { waitUntil: 'networkidle', timeout: 10000 }).catch(() => {});
-        await page.waitForTimeout(3000);
+        await page.waitForTimeout(5000); // เพิ่มเป็น 5 วินาที
     }
 
     this.smartLog(`[AUTO-BOT] 🏁 Navigation cleanup finished. Ready for next task.`);
