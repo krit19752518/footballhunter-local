@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/football_models.dart';
 import '../services/api_service.dart';
@@ -17,6 +18,7 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
   late Future<List<Bet>> _betsFuture;
   late Future<List<RealBetLog>> _realBetsFuture;
   late Future<List<Signal>> _signalsFuture;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
@@ -24,6 +26,23 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
     _betsFuture = ApiService.getBetHistory();
     _realBetsFuture = ApiService.getRealBetHistory();
     _signalsFuture = ApiService.getSignals();
+
+    // รีเฟรชข้อมูลอัตโนมัติทุก 10 วินาที
+    _refreshTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+      if (mounted) {
+        setState(() {
+          _betsFuture = ApiService.getBetHistory();
+          _realBetsFuture = ApiService.getRealBetHistory();
+          _signalsFuture = ApiService.getSignals();
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _selectDateRange() async {
