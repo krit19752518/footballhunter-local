@@ -19,6 +19,7 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
   late Future<List<RealBetLog>> _realBetsFuture;
   late Future<List<Signal>> _signalsFuture;
   Timer? _refreshTimer;
+  int _countdown = 10;
 
   @override
   void initState() {
@@ -27,13 +28,18 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
     _realBetsFuture = ApiService.getRealBetHistory();
     _signalsFuture = ApiService.getSignals();
 
-    // รีเฟรชข้อมูลอัตโนมัติทุก 10 วินาที
-    _refreshTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+    // รีเฟรชข้อมูลอัตโนมัติพร้อมนับถอยหลังในทุก 1 วินาที
+    _refreshTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
         setState(() {
-          _betsFuture = ApiService.getBetHistory();
-          _realBetsFuture = ApiService.getRealBetHistory();
-          _signalsFuture = ApiService.getSignals();
+          if (_countdown > 1) {
+            _countdown--;
+          } else {
+            _countdown = 10;
+            _betsFuture = ApiService.getBetHistory();
+            _realBetsFuture = ApiService.getRealBetHistory();
+            _signalsFuture = ApiService.getSignals();
+          }
         });
       }
     });
@@ -85,10 +91,24 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
             tooltip: 'เลือกช่วงวันที่',
             onPressed: _selectDateRange,
           ),
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4.0),
+              child: Text(
+                'รีเฟรชในอีก $_countdown วินาที',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Colors.greenAccent,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () {
               setState(() {
+                _countdown = 10;
                 _betsFuture = ApiService.getBetHistory();
                 _realBetsFuture = ApiService.getRealBetHistory();
                 _signalsFuture = ApiService.getSignals();
