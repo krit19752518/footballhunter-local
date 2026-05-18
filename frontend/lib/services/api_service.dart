@@ -64,6 +64,19 @@ class ApiService {
     return false;
   }
 
+  static Future<double?> getActualBalance() async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/browser/balance'));
+      if (response.statusCode == 200) {
+        final val = json.decode(response.body)['balance'];
+        if (val != null) {
+          return double.tryParse(val.toString());
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   static Future<void> setBrowserReady(bool ready) async {
     await http.post(
       Uri.parse('$baseUrl/browser/ready'),

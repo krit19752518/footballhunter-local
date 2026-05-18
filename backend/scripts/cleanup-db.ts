@@ -1,9 +1,5 @@
 
-import { PrismaClient } from '@prisma/client';
-
-process.env.DATABASE_URL = "postgresql://ubuntu:hunter1234@103.169.67.62:5432/football_hunter";
-
-const prisma = new PrismaClient();
+import prisma from '../src/lib/prisma';
 
 async function main() {
   console.log('🧹 Starting Database Cleanup (Hardcoded URL)...');

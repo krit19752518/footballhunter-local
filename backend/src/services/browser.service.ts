@@ -6,7 +6,7 @@ import prisma from '../lib/prisma';
 export class BrowserService {
   private static browser: Browser | null = null;
   private static context: BrowserContext | null = null;
-  private static page: Page | null = null;
+  public static page: Page | null = null;
   private static isReady: boolean = false;
   private static isProcessing: boolean = false;
   private static queue: any[] = []; // คิวงานที่รอประมวลผล
@@ -15,6 +15,8 @@ export class BrowserService {
   private static isTestRunning: boolean = false; // สำหรับเลือกไฟล์ Log
   private static nextStepResolver: (() => void) | null = null;
   private static stopTestRequested: boolean = false;
+  private static lastBalance: number | null = null;
+  private static lastBalanceTime: number = 0;
 
   static isQueueEmpty() {
     return this.queue.length === 0 && !this.isTestRunning;
@@ -150,6 +152,11 @@ export class BrowserService {
 
     this.smartLog(`[QUEUE] 🔄 Starting queue processor interval (every 5s)...`, isTest);
     this.queueInterval = setInterval(async () => {
+      // ดึงยอดเงินสดสะสมคงเหลือล่าสุดหากไม่ได้กำลังประมวลผลการแทง
+      if (!this.isProcessing && this.page) {
+        await this.getActualBalance().catch(() => {});
+      }
+
       if (this.isProcessing) return;
       if (this.queue.length === 0) return;
 
@@ -312,6 +319,31 @@ export class BrowserService {
         if (arrived) {
             logWithStep(`🚩 Arrived at Odds Page. Waiting 5s for stabilization...`);
             await page.waitForTimeout(5000); // หน่วงเวลาเพิ่มเป็น 5 วินาที
+
+            // --- Live Score Verification before Staking ---
+            if (taskId && taskId !== 'test-task-id') {
+                logWithStep(`🕵️ Verifying live score before proceeding...`);
+                const signalRecord = await prisma.signal.findUnique({ where: { id: taskId } }).catch(() => null);
+                if (signalRecord && signalRecord.value) {
+                    const signalScoreStr = signalRecord.value; // e.g., "0-0"
+                    const liveScore = await BrowserService.extractLiveScore(page, homeKey, awayKey);
+                    if (liveScore) {
+                        const liveScoreStr = `${liveScore.scoreHome}-${liveScore.scoreAway}`;
+                        if (liveScoreStr !== signalScoreStr) {
+                            logWithStep(`🚨 SCORE CHANGED! Signal Score: ${signalScoreStr}, Web Live Score: ${liveScoreStr}`);
+                            throw new Error(`Score changed before staking (Signal: ${signalScoreStr}, Live: ${liveScoreStr})`);
+                        } else {
+                            logWithStep(`✅ Score verified matches signal score: ${liveScoreStr}`);
+                        }
+                    } else {
+                        logWithStep(`⚠️ Could not parse live score from page header. Proceeding with caution...`);
+                    }
+                } else {
+                    logWithStep(`ℹ️ No recorded score for Signal ${taskId}. Skipping verification...`);
+                }
+            }
+            // -----------------------------------------------
+
             const formattedPrice = BrowserService.formatLine(targetLine || "0");
             logWithStep(`🔍 Searching for price: ${formattedPrice}`);
             
@@ -762,6 +794,276 @@ export class BrowserService {
 
     // ตรวจสอบว่า Processor ทำงานหรือยัง
     this.startQueueProcessor(isTest);
+  }
+
+  /**
+   * ตรวจสอบและปิด Popup โฆษณาหรือวงล้อที่ขึ้นมาบดบังหน้าบราวเซอร์
+   */
+  public static async closeAnnoyingPopups(page: Page): Promise<boolean> {
+    try {
+      const closeSelectors = [
+        '[xlink\\:href*="close"]',
+        '[xlink\\:href*="ui-close"]',
+        '[xlink\\:href*="ui-dialog-close"]',
+        '.ui-dialog-close-box__icon',
+        '.ui-dialog-close-box',
+        '._close-icon_',
+        '[class*="close-box"]',
+        '[class*="close_box"]',
+        '[class*="dialog-close"]',
+        '[class*="dialog_close"]',
+        '.van-popup__close-icon',
+        '.van-icon-cross',
+        'svg[class*="close"]',
+        'div[class*="close"]',
+        'img[src*="close"]',
+        'button[class*="close"]'
+      ];
+
+      let closedAny = false;
+      for (const sel of closeSelectors) {
+        const el = page.locator(sel).first();
+        if (await el.isVisible().catch(() => false)) {
+          console.log(`[POPUP-HANDLER] ✖️ Close popup button detected via selector "${sel}". Closing...`);
+          await el.click({ force: true }).catch(() => {});
+          closedAny = true;
+          await page.waitForTimeout(2000);
+        }
+      }
+
+      // ตรวจสอบ text X
+      const xText = page.locator('div, span, button, svg, i').filter({ hasText: /^x$/i }).first();
+      if (await xText.isVisible().catch(() => false)) {
+        console.log(`[POPUP-HANDLER] ✖️ Close popup button detected via text "X". Closing...`);
+        await xText.click({ force: true }).catch(() => {});
+        closedAny = true;
+        await page.waitForTimeout(2000);
+      }
+
+      // ตรวจสอบขนาด Overlay/Mask
+      await page.evaluate(() => {
+        const overlays = document.querySelectorAll('.ui-mask, .ui-overlay, ._mask_, .van-overlay');
+        overlays.forEach((el: any) => {
+          const rect = el.getBoundingClientRect();
+          if (rect.height > window.innerHeight * 0.7) {
+            el.click(); // ลองคลิกปิด
+            setTimeout(() => el.remove(), 200); // ลบออก
+          }
+        });
+      }).catch(() => {});
+
+      return closedAny;
+    } catch (e: any) {
+      console.log(`[POPUP-HANDLER] ⚠️ Error during closing popups: ${e.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * ดึงยอดเงินคงเหลือล่าสุดจากเว็บจริงแบบสดๆ
+   */
+  public static async getActualBalance(): Promise<number | null> {
+    const page = this.page;
+    if (!page) {
+      console.log(`[BALANCE-SYNC] ⚠️ No active page instance found yet.`);
+      return this.lastBalance;
+    }
+
+    // ถ้ายอดเงินล่าสุดเคยอัปเดตไปไม่ถึง 10 วินาทีที่แล้ว ให้ดึงจาก Cache ทันที เพื่อประหยัด CPU และกัน Log รก
+    const now = Date.now();
+    if (this.lastBalance !== null && (now - this.lastBalanceTime) < 10000) {
+      return this.lastBalance;
+    }
+
+    try {
+      // ปิด Popup กวนใจก่อนสแกนยอดเงิน
+      await this.closeAnnoyingPopups(page).catch(() => {});
+
+      // 1. ลองดึงจาก Selector ทั่วไป (เพิ่มคลาสเฉพาะเจาะจงของเว็บบาลานซ์ด้านซ้ายบน)
+      const selectors = [
+        '.global-currency-info-index',
+        '.currency-count',
+        '.currency-info-custom',
+        '.lobby-base-header__balance',
+        '[class*="balance"]',
+        '[class*="credit"]',
+        '[class*="money"]',
+        '.user-balance',
+        '.balance-amount'
+      ];
+      
+      const frames = page.frames();
+
+      // ลองดึงจาก Main page และ IFrames ผ่าน selectors
+      for (const frame of frames) {
+        for (const sel of selectors) {
+          const el = frame.locator(sel).first();
+          if (await el.isVisible().catch(() => false)) {
+            const text = await el.innerText().catch(() => "");
+            const num = parseFloat(text.replace(/[^0-9.]/g, ''));
+            if (!isNaN(num) && num > 0) {
+              console.log(`[BALANCE-SYNC] 💰 Found balance via selector "${sel}" in frame: ${num}`);
+              this.lastBalance = num;
+              this.lastBalanceTime = Date.now();
+              return num;
+            }
+          }
+        }
+      }
+
+      // 2. ดึงผ่าน Text TreeWalker ในทุกเฟรม (ค้นหาตัวเลขทศนิยมเดี่ยวๆ ใน Header)
+      for (const frame of frames) {
+        const num = await frame.evaluate(() => {
+          const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          let node;
+          const candidates = [];
+          while (node = walk.nextNode()) {
+            const txt = node.textContent?.trim() || "";
+            // ล้างอักขระพิเศษเพื่อตรวจสอบเฉพาะทศนิยม (รองรับ สัญลักษณ์เงิน และธงชาติ)
+            const cleaned = txt.replace(/[^0-9.]/g, '').trim();
+            const parts = cleaned.split('.');
+            if (parts.length === 2 && parts[1].length === 2) {
+              const val = parseFloat(cleaned);
+              if (val > 0 && val < 1000000) {
+                const parent = node.parentElement;
+                if (parent) {
+                  const rect = parent.getBoundingClientRect();
+                  
+                  // ค้นหาและตรวจสอบว่า text นี้อยู่ใน Popup/Dialog/Wheel/Bonus/Activity หรือไม่
+                  let isInsidePopup = false;
+                  let curr: HTMLElement | null = parent;
+                  while (curr) {
+                    const cls = (curr.className || "").toString().toLowerCase();
+                    const id = (curr.id || "").toString().toLowerCase();
+                    if (
+                      cls.includes('popup') || cls.includes('dialog') || cls.includes('modal') || 
+                      cls.includes('overlay') || cls.includes('mask') || cls.includes('wheel') || 
+                      cls.includes('spin') || cls.includes('bonus') || cls.includes('task') ||
+                      cls.includes('lucky') || cls.includes('gift') || cls.includes('activity') ||
+                      cls.includes('award') || cls.includes('commission') || cls.includes('invite') ||
+                      id.includes('popup') || id.includes('dialog') || id.includes('modal') ||
+                      id.includes('overlay') || id.includes('mask') || id.includes('wheel') || 
+                      id.includes('spin') || id.includes('bonus') || id.includes('task') ||
+                      id.includes('lucky') || id.includes('gift') || id.includes('activity') ||
+                      id.includes('award') || id.includes('commission') || id.includes('invite')
+                    ) {
+                      isInsidePopup = true;
+                      break;
+                    }
+                    curr = curr.parentElement;
+                  }
+                  
+                  // กรองให้มั่นใจว่ามองเห็นได้จริง และอยู่ในบริเวณส่วนบนของหน้าจอ (Header/Profile) และไม่อยู่ใน Popup
+                  if (!isInsidePopup && rect.width > 0 && rect.height > 0 && rect.top < 400) {
+                    candidates.push({ val, top: rect.top });
+                  }
+                }
+              }
+            }
+          }
+          candidates.sort((a, b) => a.top - b.top);
+          return candidates.length > 0 ? candidates[0].val : null;
+        }).catch(() => null);
+
+        if (num !== null && !isNaN(num) && num > 0) {
+          console.log(`[BALANCE-SYNC] 💰 Found balance via dynamic text scan in frame: ${num}`);
+          this.lastBalance = num;
+          this.lastBalanceTime = Date.now();
+          return num;
+        }
+      }
+
+      console.log(`[BALANCE-SYNC] ℹ️ Scanning page text, nothing found yet. Last balance: ${this.lastBalance}`);
+      return this.lastBalance;
+    } catch (e: any) {
+      console.log(`[BALANCE-SYNC] ❌ Error scraping balance: ${e.message}`);
+      return this.lastBalance;
+    }
+  }
+
+  public static getCachedBalance(): number | null {
+    return this.lastBalance;
+  }
+
+  /**
+   * สแกนหน้าบราวเซอร์จริงเพื่อค้นหาและแยกผลสกอร์สดปัจจุบันของคู่นั้นๆ
+   */
+  public static async extractLiveScore(page: any, homeKey: string, awayKey: string): Promise<{ scoreHome: number; scoreAway: number } | null> {
+    try {
+      // วิธีการที่ 1: ค้นหาข้อความแบบยึดแพทเทิร์นทศนิยม/สกอร์ (เช่น "0 - 0", "1:2") ใน Header
+      const scoreElements = page.locator('div, span, p');
+      const count = await scoreElements.count().catch(() => 0);
+      
+      for (let i = 0; i < count; i++) {
+        const el = scoreElements.nth(i);
+        const isVisible = await el.isVisible().catch(() => false);
+        if (!isVisible) continue;
+        
+        const text = await el.innerText().catch(() => "");
+        // มองหารูปแบบที่เหมือนสกอร์: เช่น "0 - 0", "1:2", "3 - 1"
+        const scorePattern = /^\s*(\d{1,2})\s*[-:]\s*(\d{1,2})\s*$/;
+        const match = text.match(scorePattern);
+        if (match) {
+          // ตรวจสอบตำแหน่งความน่าจะเป็น (เช่น อยู่แถวบน)
+          const box = await el.boundingBox().catch(() => null);
+          if (box && box.y < 350) { // ส่วนใหญ่ Header สกอร์จะอยู่บนสุดของจอภาพมือถือ
+            const scoreHome = parseInt(match[1], 10);
+            const scoreAway = parseInt(match[2], 10);
+            this.smartLog(`[LIVE-SCORE] Found score via format pattern: ${scoreHome}-${scoreAway}`);
+            return { scoreHome, scoreAway };
+          }
+        }
+      }
+
+      // วิธีการที่ 2: ค้นหา Node ที่มีชื่อทีมและหาตัวเลขใกล้เคียง
+      // ค้นหาตำแหน่งของชื่อทีมเหย้า
+      const homeTeamEl = page.locator('div, span').filter({ hasText: homeKey }).first();
+      const awayTeamEl = page.locator('div, span').filter({ hasText: awayKey }).first();
+
+      if (await homeTeamEl.isVisible() && await awayTeamEl.isVisible()) {
+        // มองหาองค์ประกอบที่มีตัวเลขเดี่ยวๆ ใน Container เดียวกันหรือ Sibling
+        // ดึงข้อความทั้งหมดของ Container แถบข้อมูลด้านบน
+        const headerText = await page.evaluate(() => {
+          const header = document.querySelector('.lobby-base-header, header, [class*="header"]');
+          return header ? (header as HTMLElement).innerText : document.body.innerText;
+        }).catch(() => "");
+
+        // มองหารูปแบบสกอร์ในข้อความ Header เช่น "ทีม A 0 - 0 ทีม B" หรือมีตัวเลขเดี่ยวปะปน
+        const scoreMatches = headerText.match(/(\d{1,2})\s*[-:]\s*(\d{1,2})/);
+        if (scoreMatches) {
+          const scoreHome = parseInt(scoreMatches[1], 10);
+          const scoreAway = parseInt(scoreMatches[2], 10);
+          this.smartLog(`[LIVE-SCORE] Found score via Header match: ${scoreHome}-${scoreAway}`);
+          return { scoreHome, scoreAway };
+        }
+        
+        // ค้นหาใน Parent หรือ Sibling ของชื่อทีม
+        const homeScore = await page.evaluate((el: any) => {
+          const parent = el.parentElement;
+          if (!parent) return null;
+          // หา child ที่เป็นตัวเลขเดี่ยว
+          const numbers = Array.from(parent.querySelectorAll('div, span')).map((e: any) => e.innerText.trim()).filter((t: string) => /^\d+$/.test(t));
+          return numbers.length > 0 ? parseInt(numbers[0], 10) : null;
+        }, await homeTeamEl.elementHandle()).catch(() => null);
+
+        const awayScore = await page.evaluate((el: any) => {
+          const parent = el.parentElement;
+          if (!parent) return null;
+          const numbers = Array.from(parent.querySelectorAll('div, span')).map((e: any) => e.innerText.trim()).filter((t: string) => /^\d+$/.test(t));
+          return numbers.length > 0 ? parseInt(numbers[0], 10) : null;
+        }, await awayTeamEl.elementHandle()).catch(() => null);
+
+        if (homeScore !== null && awayScore !== null) {
+          this.smartLog(`[LIVE-SCORE] Found score via relative siblings: ${homeScore}-${awayScore}`);
+          return { scoreHome: homeScore, scoreAway: awayScore };
+        }
+      }
+
+      return null;
+    } catch (e: any) {
+      this.smartLog(`[LIVE-SCORE] Error parsing score: ${e.message}`);
+      return null;
+    }
   }
 
   private static async executeFullBetFlow(page: any, task: any) {

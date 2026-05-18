@@ -123,7 +123,8 @@ export class SignalService {
           logicType: fullLogicType, 
           message: finalMessage,
           matchTimeAtSignal: match.matchTime || '0',
-          period: period
+          period: period,
+          value: `${match.scoreHome}-${match.scoreAway}`
         }
       });
       

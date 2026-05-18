@@ -18,6 +18,7 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
   late Future<List<Bet>> _betsFuture;
   late Future<List<RealBetLog>> _realBetsFuture;
   late Future<List<Signal>> _signalsFuture;
+  late Future<double?> _balanceFuture;
   Timer? _refreshTimer;
 
   @override
@@ -26,6 +27,7 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
     _betsFuture = ApiService.getBetHistory();
     _realBetsFuture = ApiService.getRealBetHistory();
     _signalsFuture = ApiService.getSignals();
+    _balanceFuture = ApiService.getActualBalance();
 
     // รีเฟรชข้อมูลอัตโนมัติทุก 30 วินาที
     _refreshTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
@@ -34,6 +36,7 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
           _betsFuture = ApiService.getBetHistory();
           _realBetsFuture = ApiService.getRealBetHistory();
           _signalsFuture = ApiService.getSignals();
+          _balanceFuture = ApiService.getActualBalance();
         });
       }
     });
@@ -92,13 +95,14 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
                 _betsFuture = ApiService.getBetHistory();
                 _realBetsFuture = ApiService.getRealBetHistory();
                 _signalsFuture = ApiService.getSignals();
+                _balanceFuture = ApiService.getActualBalance();
               });
             },
           ),
         ],
       ),
       body: FutureBuilder<List<dynamic>>(
-        future: Future.wait([_betsFuture, _realBetsFuture, _signalsFuture]),
+        future: Future.wait([_betsFuture, _realBetsFuture, _signalsFuture, _balanceFuture]),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -110,6 +114,7 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
           List<Bet> allBets = snapshot.data?[0] ?? [];
           List<RealBetLog> allRealBets = snapshot.data?[1] ?? [];
           List<Signal> allSignals = snapshot.data?[2] ?? [];
+          double? actualBalance = snapshot.data != null && snapshot.data!.length > 3 ? snapshot.data![3] as double? : null;
           
           // กรองข้อมูลตามช่วงวันที่เลือก
           List<Bet> filteredBets = allBets;
@@ -219,6 +224,7 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
                 realLoseCount: realLoseCount,
                 realPendingCount: realPendingCount,
                 realNetProfit: realNetProfit,
+                actualBalance: actualBalance,
               ),
               Expanded(
                 child: Row(
@@ -304,6 +310,7 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
     required int realLoseCount,
     required int realPendingCount,
     required double realNetProfit,
+    double? actualBalance,
   }) {
     int settledBets = winCount + loseCount;
     double winRate = settledBets > 0 ? (winCount / settledBets) * 100 : 0;
@@ -399,6 +406,11 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
                         children: [
                           _buildStatItem('แทงสำเร็จ', '${Formatters.formatNumber(realTotalBets)} ไม้', Colors.white),
                           _buildStatItem('ยอดแทงรวม', '${Formatters.formatCurrency(realTotalBetAmount)} ฿', Colors.orangeAccent),
+                          _buildStatItem(
+                            'เงินคงเหลือจริง',
+                            actualBalance != null ? '${Formatters.formatCurrency(actualBalance)} ฿' : 'กำลังดึง...',
+                            actualBalance != null ? Colors.yellowAccent : Colors.yellowAccent.withOpacity(0.5),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 16),

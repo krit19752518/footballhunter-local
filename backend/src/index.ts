@@ -114,6 +114,11 @@ app.get('/browser/status', (req, res) => {
   res.json({ isReady: BrowserService.getStatus() });
 });
 
+app.get('/browser/balance', async (req, res) => {
+  const balance = await BrowserService.getActualBalance();
+  res.json({ balance: balance || BrowserService.getCachedBalance() });
+});
+
 app.post('/browser/ready', (req, res) => {
   const { ready } = req.body;
   BrowserService.setReady(ready);
