@@ -1,8 +1,9 @@
 # Football Hunter - Task Tracking
 
-## 📅 สถานะล่าสุด: 16 พฤษภาคม 2026
+## 📅 สถานะล่าสุด: 18 พฤษภาคม 2026
 
 ### ✅ งานที่เสร็จแล้ว (Completed)
+- [x] **Local PostgreSQL & Playwright Setup:** เชื่อมต่อฐานข้อมูลท้องถิ่นและติดตั้งเบราว์เซอร์ Chromium สำเร็จ 100%
 - [x] **Full-Auto Betting Flow:** ระบบรันต่อเนื่องจนจบงาน และปิดหน้าต่าง Success อัตโนมัติ
 - [x] **Keyboard/Keypad Fix:** แก้ไขการกรอกตัวเลข 1, 0 ให้เสถียร 100%
 - [x] **Side-Aware Matching:** บอทเลือกฝั่ง Home/Away ได้ถูกต้องแม่นยำขึ้น
