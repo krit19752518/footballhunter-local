@@ -186,7 +186,7 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
                 } else if (mockBet.status == 'Lost') {
                   lostBets.add(mockBet);
                   realNetProfit -= amount; // ขาดทุนเต็มจำนวน
-                } else {
+                } else if (mockBet.status == 'Pending') {
                   pendingBets.add(mockBet);
                 }
               }
@@ -200,7 +200,7 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
 
           int realWinCount = wonBets.length;
           int realLoseCount = lostBets.length;
-          int realPendingCount = realTotalBets - realWinCount - realLoseCount;
+          int realPendingCount = pendingBets.length;
 
 
           return Column(

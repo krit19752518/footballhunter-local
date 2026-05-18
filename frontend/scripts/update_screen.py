@@ -124,7 +124,7 @@ replacement_stat_calc = '''          // คำนวณสถิติ Mock Bot
                 } else if (mockBet.status == 'Lost') {
                   realLoseCount++;
                   realNetProfit -= amount; // ขาดทุนเต็มจำนวน
-                } else {
+                } else if (mockBet.status == 'Pending') {
                   realPendingCount++;
                 }
               } else {
