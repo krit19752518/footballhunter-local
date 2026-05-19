@@ -21,6 +21,7 @@ conn.on('ready', () => {
       conn.end();
       return;
     }
+    stream.resume();
     
     stream.on('close', () => {
       console.log("✅ PM2 processes stopped!");
@@ -32,6 +33,7 @@ conn.on('ready', () => {
           conn.end();
           return;
         }
+        stream.resume();
         
         stream.on('close', () => {
           // 3. Initialize SFTP to upload cleanup-db.ts
@@ -80,6 +82,7 @@ conn.on('ready', () => {
                       conn.end();
                       return;
                     }
+                    stream.resume();
                     stream.on('close', () => {
                       console.log("🌟 PM2 processes started successfully! DB is perfectly clean!");
                       conn.end();
