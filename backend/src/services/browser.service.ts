@@ -478,11 +478,6 @@ export class BrowserService {
                             div[class*="cart"]
                         `).first();
 
-                        // 1.5 ลบเลเยอร์บังหน้าก่อนคลิกตระกร้า
-                        await page.evaluate(() => {
-                            document.querySelectorAll('.ui-mask, .ui-overlay, ._mask_').forEach(el => el.remove());
-                        }).catch(() => {});
-
                         // ถ้ายังไม่เห็นช่องใส่เงิน ให้ลองเปิดตระกร้า
                         if (!(await amountInput.isVisible())) {
                             logWithStep(`🔍 Waiting for cart icon to appear...`);
