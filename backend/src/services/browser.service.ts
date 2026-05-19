@@ -280,14 +280,26 @@ export class BrowserService {
       let found = false;
 
       for (let retry = 0; retry < 10; retry++) { // 10 รอบ รอบละ 1s = 10 วินาที
-          const possibleRows = page.locator('div, li, a').filter({ hasText: homeKey }).filter({ hasText: awayKey });
-          const count = await possibleRows.count();
+          // ลองหาด้วย selector ที่เฉพาะเจาะจงของคู่บอลก่อนเพื่อเลี่ยง parent wrapper
+          let possibleRows = page.locator('.match-item, .match-row, .game-item, [class*="match-item"], [class*="game-item"], [class*="match-row"], [class*="game-row"], li')
+              .filter({ hasText: homeKey })
+              .filter({ hasText: awayKey });
+          
+          let count = await possibleRows.count();
+          if (count === 0) {
+              // fallback เป็นตัวที่กว้างขึ้น
+              possibleRows = page.locator('div, li, a')
+                  .filter({ hasText: homeKey })
+                  .filter({ hasText: awayKey });
+              count = await possibleRows.count();
+          }
           
           for (let i = 0; i < count; i++) {
             const candidate = possibleRows.nth(i);
             if (await candidate.isVisible()) {
               const box = await candidate.boundingBox();
-              if (box && box.height > 30) { 
+              // ความสูงควรอยู่ระหว่าง 30px ถึง 150px เพื่อยืนยันว่าเป็นแถวคู่บอลจริง ไม่ใช่ container ครอบกลุ่ม
+              if (box && box.height > 30 && box.height < 150) { 
                 matchRow = candidate;
                 found = true;
                 break;
