@@ -32,9 +32,12 @@ export class SignalService {
 
     // ถ้าราคาไหลลงเกิน 0.03 (ปรับให้สัญญาณออกถี่ขึ้นเพื่อเทสระบบตามคำขอ)
     if (diff >= 0.03) {
-      const oddsAtBet = current.homeOdds || 1.8;
+      const oddsOption = {
+        recommended: current.homeOdds || 1.8,
+        opposite: current.awayOdds || 1.8
+      };
       const betSide = match.homeTeam;
-      await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `📈 ต่อไหลแรง: ${match.homeTeam} ราคาลดเหลือ ${current.homeOdds} (ไหลลง ${diff.toFixed(2)}) 🔥 วางเดิมพัน ${betSide}`, oddsAtBet, odds.line, betSide, odds.type);
+      await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `📈 ต่อไหลแรง: ${match.homeTeam} ราคาลดเหลือ ${current.homeOdds} (ไหลลง ${diff.toFixed(2)}) 🔥 วางเดิมพัน ${betSide}`, oddsOption, odds.line, betSide, odds.type);
     }
   }
 
@@ -49,9 +52,12 @@ export class SignalService {
       const direction = currentLine > oldLine ? 'เพิ่มขึ้น' : 'ลดลง';
       const betSide = direction === 'เพิ่มขึ้น' ? match.homeTeam : match.awayTeam;
       const rec = `ตามไปที่ ${betSide}`;
-      const oddsAtBet = direction === 'เพิ่มขึ้น' ? (history[0].homeOdds || 0.9) : (history[0].awayOdds || 0.9);
+      const oddsOption = {
+        recommended: direction === 'เพิ่มขึ้น' ? (history[0].homeOdds || 0.9) : (history[0].awayOdds || 0.9),
+        opposite: direction === 'เพิ่มขึ้น' ? (history[0].awayOdds || 0.9) : (history[0].homeOdds || 0.9)
+      };
       
-      await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `🚧 ขยับกำแพง: แต้มต่อ ${direction} (${history[history.length - 1].line} -> ${history[0].line}) 🔥 ${rec}`, oddsAtBet, history[0].line, betSide, odds.type);
+      await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `🚧 ขยับกำแพง: แต้มต่อ ${direction} (${history[history.length - 1].line} -> ${history[0].line}) 🔥 ${rec}`, oddsOption, history[0].line, betSide, odds.type);
     }
   }
 
@@ -59,13 +65,16 @@ export class SignalService {
     const minutes = parseInt(match.matchTime || '0');
     
     if (match.status === 'Live' && odds.line === '0.5' && minutes >= 75 && (odds.overOdds || 0) < 2.0) {
-      const targetOdds = odds.overOdds || 1.8;
+      const oddsOption = {
+        recommended: odds.overOdds || 1.8,
+        opposite: odds.underOdds || 1.8
+      };
       const betSide = '[สูง]';
-      await this.createSignalAndBet(match, 'สูง/ต่ำ (O/U)', `⏱️ สูงท้ายเกม: ${match.name} สูง 0.5 ราคา ${targetOdds} 🔥 กด ${betSide} ทันที`, targetOdds, odds.line, betSide, odds.type);
+      await this.createSignalAndBet(match, 'สูง/ต่ำ (O/U)', `⏱️ สูงท้ายเกม: ${match.name} สูง 0.5 ราคา ${oddsOption.recommended} 🔥 กด ${betSide} ทันที`, oddsOption, odds.line, betSide, odds.type);
     }
   }
 
-  private static async createSignalAndBet(match: any, logicType: string, message: string, oddsAtBet: number, lineAtBet: string, betSide: string, oddsType: string) {
+  private static async createSignalAndBet(match: any, logicType: string, message: string, oddsOption: { recommended: number; opposite: number }, lineAtBet: string, betSide: string, oddsType: string) {
     // ข้ามสัญญาณที่เป็นครึ่งแรก (First Half / FH) ทั้งหมดตามคำขอของผู้ใช้
     if (oddsType.startsWith('FH')) {
       return;
@@ -133,16 +142,25 @@ export class SignalService {
         }
       });
       
-      // แทงสวนทุก signal ตามที่ผู้ใช้แจ้ง (Opposite Betting)
-      let oppositeSide = betSide;
-      if (betSide === match.homeTeam) {
-        oppositeSide = match.awayTeam;
-      } else if (betSide === match.awayTeam) {
-        oppositeSide = match.homeTeam;
-      } else if (betSide.includes('สูง')) {
-        oppositeSide = '[ต่ำ]';
-      } else if (betSide.includes('ต่ำ')) {
-        oppositeSide = '[สูง]';
+      // 1. อ่านการตั้งค่า Mode จาก Environment Variable (ค่าเริ่มต้นเป็น FOLLOW)
+      const betMode = (process.env.BET_MODE || 'FOLLOW').toUpperCase();
+      const isOpposite = betMode === 'OPPOSITE';
+
+      // 2. กำหนดฝั่งเดิมพันและราคาตาม Mode
+      let finalBetSide = betSide;
+      let finalOdds = oddsOption.recommended;
+
+      if (isOpposite) {
+        finalOdds = oddsOption.opposite;
+        if (betSide === match.homeTeam) {
+          finalBetSide = match.awayTeam;
+        } else if (betSide === match.awayTeam) {
+          finalBetSide = match.homeTeam;
+        } else if (betSide.includes('สูง')) {
+          finalBetSide = '[ต่ำ]';
+        } else if (betSide.includes('ต่ำ')) {
+          finalBetSide = '[สูง]';
+        }
       }
 
       const bet = await prisma.bet.create({
@@ -150,20 +168,21 @@ export class SignalService {
           signalId: signal.id,
           matchId: match.id,
           amount: 10,
-          oddsAtBet: oddsAtBet,
+          oddsAtBet: finalOdds,
           lineAtBet: lineAtBet,
-          betSide: oppositeSide, // บันทึกฝั่งแทงสวน
+          betSide: finalBetSide, 
           status: 'Pending',
           period: period
         }
       });
 
-      // หาว่าฝั่งที่สวนเป็น เหย้า หรือ เยือน
-      let sideLabel = oppositeSide;
-      if (oppositeSide === match.homeTeam) sideLabel = 'ทีมเหย้า (แทงสวน)';
-      else if (oppositeSide === match.awayTeam) sideLabel = 'ทีมเยือน (แทงสวน)';
-      else if (oppositeSide.includes('สูง')) sideLabel = 'สูง (แทงสวน)';
-      else if (oppositeSide.includes('ต่ำ')) sideLabel = 'ต่ำ (แทงสวน)';
+      // 3. กำหนดป้ายแสดงผล
+      let sideLabel = finalBetSide;
+      const modeTag = isOpposite ? 'แทงสวน' : 'แทงตาม';
+      if (finalBetSide === match.homeTeam) sideLabel = `ทีมเหย้า (${modeTag})`;
+      else if (finalBetSide === match.awayTeam) sideLabel = `ทีมเยือน (${modeTag})`;
+      else if (finalBetSide.includes('สูง')) sideLabel = `สูง (${modeTag})`;
+      else if (finalBetSide.includes('ต่ำ')) sideLabel = `ต่ำ (${modeTag})`;
 
       const periodLabel = period === 'FH' ? 'ครึ่งแรก' : 'เต็มเวลา';
 
@@ -188,13 +207,13 @@ export class SignalService {
 
       const webLine = formatLine(lineAtBet);
 
-      botLog(`[SIGNAL & BET] ✅ [ลีก: ${match.leagueName}] [คู่: ${match.name}] [ฝั่ง: ${sideLabel}] [ราคา: ${webLine}] [ช่วงเวลา: ${periodLabel}] (นาทีที่ ${match.matchTime}')`);
+      botLog(`[SIGNAL & BET] ✅ [ลีก: ${match.leagueName}] [คู่: ${match.name}] [ฝั่ง: ${sideLabel}] [ราคา: ${webLine}] [ช่วงเวลา: ${periodLabel}] (นาทีที่ ${match.matchTime}') [โหมด: ${betMode}]`);
 
       // Trigger Auto-Bet if ready
       if (BrowserService.getStatus()) {
-        botLog(`[AUTO-BET] Calling BrowserService.findAndBet (Opposite) for ${match.name}...`);
+        botLog(`[AUTO-BET] Calling BrowserService.findAndBet (${betMode}) for ${match.name}...`);
         try {
-          await BrowserService.findAndBet(match.leagueName, match.name, oppositeSide, 10, lineAtBet, false, signal.id);
+          await BrowserService.findAndBet(match.leagueName, match.name, finalBetSide, 10, lineAtBet, false, signal.id);
           await prisma.bet.update({
             where: { id: bet.id },
             data: { autoBetStatus: 'Queued' }
