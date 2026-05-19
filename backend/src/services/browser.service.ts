@@ -444,14 +444,18 @@ export class BrowserService {
                     const labelCount = await allLabels.count();
                     
                     // คำนวณหาพิกัดกึ่งกลาง X ของ Section เพื่อระบุฝั่ง ซ้าย (Home/Over) vs ขวา (Away/Under) อย่างแม่นยำ
+                    await targetSection.scrollIntoViewIfNeeded().catch(() => {});
                     const sectionBox = await targetSection.boundingBox().catch(() => null);
-                    const sectionCenterX = sectionBox ? (sectionBox.x + sectionBox.width / 2) : 0;
+                    // ถ้าหาพิกัด section ไม่ได้ ให้ดึงความกว้างหน้าจอแทน
+                    const fallbackCenterX = page.viewportSize() ? page.viewportSize()!.width / 2 : 400;
+                    const sectionCenterX = sectionBox ? (sectionBox.x + sectionBox.width / 2) : fallbackCenterX;
                     
                     for (let j = 0; j < labelCount; j++) {
                         const label = allLabels.nth(j);
                         const labelText = await label.innerText().catch(() => "");
                         if (this.isLineMatch(cleanTarget, labelText)) {
                             const betBox = label.locator('xpath=ancestor::div[contains(@class, "_bet-box_")]').first();
+                            await betBox.scrollIntoViewIfNeeded().catch(() => {});
                             const betBoxBox = await betBox.boundingBox().catch(() => null);
                             
                             let currentIsAway = (j % 2 === 1); // fallback แบบใช้ตำแหน่ง Index
