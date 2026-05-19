@@ -13,6 +13,7 @@ export class BrowserService {
   private static queueInterval: NodeJS.Timeout | null = null;
 
   private static isTestRunning: boolean = false; // สำหรับเลือกไฟล์ Log
+  private static currentTaskIsTest: boolean = false; // สำหรับจำแนกประเภทงานล่าสุด (Test หรือ Real)
   private static nextStepResolver: (() => void) | null = null;
   private static stopTestRequested: boolean = false;
   private static lastBalance: number | null = null;
@@ -45,10 +46,12 @@ export class BrowserService {
   }
 
   private static smartLog(message: string, forcedIsTest?: boolean) {
-    if (forcedIsTest === true || (forcedIsTest === undefined && this.isTestRunning)) {
+    const isTest = forcedIsTest !== undefined ? forcedIsTest : this.currentTaskIsTest;
+    if (isTest) {
         testBotLog(message);
     } else {
         botLog(message);
+        testBotLog(message); // คัดลอกไปยัง Log การทดสอบด้วย เพื่อให้แสดงผลในแผงควบคุมฝั่งแอป Flutter
     }
   }
 
@@ -218,7 +221,8 @@ export class BrowserService {
     const page: any = this.page;
 
       this.isProcessing = true;
-      this.isTestRunning = !!isTest;
+      this.currentTaskIsTest = !!isTest;
+      this.isTestRunning = true; // บังคับเป็น true เพื่อให้เปิดใช้งานขั้นตอนดีเลย์และหยุดรอตรวจบิล (Semi-Auto Flow)
       this.stopTestRequested = false;
       let step = 1;
       const logWithStep = (msg: string) => {
@@ -736,6 +740,7 @@ export class BrowserService {
       await this.cleanupAndGoBack(page).catch(() => {});
     } finally {
       this.isProcessing = false;
+      this.isTestRunning = false;
     }
   }
 

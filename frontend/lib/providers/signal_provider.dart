@@ -18,6 +18,7 @@ class SignalProvider with ChangeNotifier {
   SignalProvider() {
     _initSocket();
     fetchData();
+    _startPeriodicStatusCheck();
   }
 
   void _initSocket() {
@@ -78,27 +79,44 @@ class SignalProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  // ระบบดึง Log และสถานะแบบ Real-time
-  bool _shouldPollLogs = false;
-  Future<void> _startLogPolling() async {
-    _shouldPollLogs = true;
-    while (_shouldPollLogs) {
+  // ระบบดึง Log และสถานะแบบ Real-time (ทำงานตลอดเวลา)
+  void _startPeriodicStatusCheck() {
+    Future.doWhile(() async {
       await Future.delayed(const Duration(seconds: 2));
-      _testLogs = await ApiService.getTestLogs();
-      
-      final status = await ApiService.getTestStatus();
-      bool queueEmpty = status['isQueueEmpty'] ?? true;
-      bool testRunning = status['isTestRunning'] ?? false;
+      try {
+        final status = await ApiService.getTestStatus();
+        final testRunning = status['isTestRunning'] ?? false;
+        final queueEmpty = status['isQueueEmpty'] ?? true;
+        
+        bool changed = false;
+        
+        if (testRunning != _isTestRunning) {
+          _isTestRunning = testRunning;
+          changed = true;
+        }
 
-      // ถ้าคิวว่างและไม่มีงานรันอยู่ ให้หยุดรัน (Reset ปุ่ม)
-      if (queueEmpty && !testRunning && _isTestRunning) {
-        _isTestRunning = false;
-        _testStatus = "การทดสอบเสร็จสิ้นทั้งหมดแล้ว";
-        _shouldPollLogs = false;
+        // หากทำงานเสร็จสิ้นทั้งหมดแล้ว
+        if (queueEmpty && !testRunning && _isTestRunning) {
+          _isTestRunning = false;
+          _testStatus = "การทดสอบเสร็จสิ้นทั้งหมดแล้ว";
+          changed = true;
+        }
+
+        // ดึง Logs มาแสดงผลเสมอเมื่อบอททำงานอยู่
+        if (_isTestRunning) {
+          final logs = await ApiService.getTestLogs();
+          _testLogs = logs;
+          changed = true;
+        }
+
+        if (changed) {
+          notifyListeners();
+        }
+      } catch (e) {
+        print('Error in periodic status check: $e');
       }
-      
-      notifyListeners();
-    }
+      return true; // ลูปทำงานตลอดไป
+    });
   }
 
   Future<void> startBulkTest() async {
@@ -108,8 +126,6 @@ class SignalProvider with ChangeNotifier {
     _testStatus = "กำลังเริ่มการทดสอบ (${_selectedSignalIds.length} รายการ)...";
     _testLogs = ["กำลังเตรียมระบบ..."];
     notifyListeners();
-
-    _startLogPolling(); // เริ่มดึง Log
 
     try {
       int count = 1;
@@ -166,7 +182,6 @@ class SignalProvider with ChangeNotifier {
   }
 
   Future<void> clearTestQueue() async {
-    _shouldPollLogs = false;
     await ApiService.clearTestQueue();
     _isTestRunning = false;
     _selectedSignalIds.clear();
@@ -183,7 +198,6 @@ class SignalProvider with ChangeNotifier {
     if (status['isQueueEmpty'] == true && status['isTestRunning'] == false) {
        _isTestRunning = false;
        _testStatus = "การทดสอบเสร็จสิ้นแล้ว";
-       _shouldPollLogs = false;
        notifyListeners();
     }
   }
