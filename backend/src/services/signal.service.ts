@@ -133,6 +133,18 @@ export class SignalService {
         }
       });
       
+      // แทงสวนทุก signal ตามที่ผู้ใช้แจ้ง (Opposite Betting)
+      let oppositeSide = betSide;
+      if (betSide === match.homeTeam) {
+        oppositeSide = match.awayTeam;
+      } else if (betSide === match.awayTeam) {
+        oppositeSide = match.homeTeam;
+      } else if (betSide.includes('สูง')) {
+        oppositeSide = '[ต่ำ]';
+      } else if (betSide.includes('ต่ำ')) {
+        oppositeSide = '[สูง]';
+      }
+
       const bet = await prisma.bet.create({
         data: {
           signalId: signal.id,
@@ -140,18 +152,18 @@ export class SignalService {
           amount: 10,
           oddsAtBet: oddsAtBet,
           lineAtBet: lineAtBet,
-          betSide: betSide,
+          betSide: oppositeSide, // บันทึกฝั่งแทงสวน
           status: 'Pending',
           period: period
         }
       });
 
-      // หาว่า betSide เป็น เหย้า หรือ เยือน
-      let sideLabel = betSide;
-      if (betSide === match.homeTeam) sideLabel = 'ทีมเหย้า';
-      else if (betSide === match.awayTeam) sideLabel = 'ทีมเยือน';
-      else if (betSide.includes('สูง')) sideLabel = 'สูง';
-      else if (betSide.includes('ต่ำ')) sideLabel = 'ต่ำ';
+      // หาว่าฝั่งที่สวนเป็น เหย้า หรือ เยือน
+      let sideLabel = oppositeSide;
+      if (oppositeSide === match.homeTeam) sideLabel = 'ทีมเหย้า (แทงสวน)';
+      else if (oppositeSide === match.awayTeam) sideLabel = 'ทีมเยือน (แทงสวน)';
+      else if (oppositeSide.includes('สูง')) sideLabel = 'สูง (แทงสวน)';
+      else if (oppositeSide.includes('ต่ำ')) sideLabel = 'ต่ำ (แทงสวน)';
 
       const periodLabel = period === 'FH' ? 'ครึ่งแรก' : 'เต็มเวลา';
 
@@ -180,9 +192,9 @@ export class SignalService {
 
       // Trigger Auto-Bet if ready
       if (BrowserService.getStatus()) {
-        botLog(`[AUTO-BET] Calling BrowserService.findAndBet for ${match.name}...`);
+        botLog(`[AUTO-BET] Calling BrowserService.findAndBet (Opposite) for ${match.name}...`);
         try {
-          await BrowserService.findAndBet(match.leagueName, match.name, betSide, 10, lineAtBet, false, signal.id);
+          await BrowserService.findAndBet(match.leagueName, match.name, oppositeSide, 10, lineAtBet, false, signal.id);
           await prisma.bet.update({
             where: { id: bet.id },
             data: { autoBetStatus: 'Queued' }

@@ -466,16 +466,36 @@ export class BrowserService {
                         await page.waitForTimeout(3000); // หน่วงเวลาเพิ่มเป็น 3 วินาที
 
                         logWithStep(`[AUTO-BOT] 🛒 Checking if Bet Slip is already open...`);
-                        const amountInput = page.locator('._option_wlp6f_80, ._stake-container_15log_45, ._container_15log_69, .ui-input__input').first();
                         
-                        // ปรับปรุง Selector ตระกร้าให้ครอบคลุมขึ้น
+                        // Scope the locator to only look inside the popup/slip container to avoid matching search input
+                        const amountInput = page.locator(`
+                            [class*="popup"] input,
+                            [class*="popup"] .ui-input__input,
+                            [class*="popup"] [class*="stake-input"],
+                            [class*="popup"] [class*="amount-input"],
+                            [class*="popup"] div[role="textbox"],
+                            [class*="slip"] input,
+                            [class*="slip"] .ui-input__input,
+                            [class*="slip"] [class*="stake-input"],
+                            [class*="slip"] [class*="amount-input"],
+                            [class*="slip"] div[role="textbox"],
+                            ._option_wlp6f_80, 
+                            ._stake-container_15log_45, 
+                            ._container_15log_69
+                        `).first();
+                        
+                        // ปรับปรุง Selector ตระกร้าให้ครอบคลุมและเจาะจงเฉพาะปุ่มตะกร้า
                         const cartIcon = page.locator(`
                             [class*="sport-bet-cart-classname"], 
                             [class*="_bet-cart_"], 
-                            [class*="bet-cart"],
+                            [class*="bet-cart"] img,
+                            [class*="bet-cart"] i,
                             i[data-src*="icon_ty_floatbtn.svg"],
                             .ui-badge__wrapper img[src*="cart"],
-                            div[class*="cart"]
+                            .ui-badge__wrapper i,
+                            .ui-badge__wrapper,
+                            [class*="floatbtn"],
+                            [class*="float-btn"]
                         `).first();
 
                         // ถ้ายังไม่เห็นช่องใส่เงิน ให้ลองเปิดตระกร้า
@@ -500,7 +520,7 @@ export class BrowserService {
                                     const box = await cartIcon.boundingBox();
                                     if (box) {
                                         logWithStep(`🖱️ Trying coordinate click on cart icon...`);
-                                        await page.mouse.click(box.x + box.width/2, box.y + box.height/2);
+                                        await page.mouse.click(box.x + box.width/2, box.y + box.height/2).catch(() => {});
                                     }
                                 }
                                 await page.waitForTimeout(3000); // เพิ่มเป็น 3 วินาที
@@ -510,15 +530,21 @@ export class BrowserService {
                         }
 
 
-                        // รอให้ช่องใส่เงินปรากฏ (ขยาย Selector ให้ครอบคลุมมากขึ้น)
+                        // รอให้ช่องใส่เงินปรากฏ (สโคปให้เจาะจงอยู่เฉพาะในสลิปเดิมพัน)
                         const slipInput = page.locator(`
+                            [class*="popup"] input,
+                            [class*="popup"] .ui-input__input,
+                            [class*="popup"] [class*="stake-input"],
+                            [class*="popup"] [class*="amount-input"],
+                            [class*="popup"] div[role="textbox"],
+                            [class*="slip"] input,
+                            [class*="slip"] .ui-input__input,
+                            [class*="slip"] [class*="stake-input"],
+                            [class*="slip"] [class*="amount-input"],
+                            [class*="slip"] div[role="textbox"],
                             ._option_wlp6f_80, 
                             ._stake-container_15log_45, 
-                            ._container_15log_69, 
-                            .ui-input__input,
-                            [class*="stake-input"],
-                            [class*="amount-input"],
-                            div[role="textbox"]
+                            ._container_15log_69
                         `).first();
 
                         await slipInput.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
@@ -574,12 +600,17 @@ export class BrowserService {
                             await page.waitForTimeout(2000); // เพิ่มเป็น 2 วินาที
 
                             // ตรวจสอบว่าเงินเข้าไหม (ถ้าหา value ได้)
-                            const currentVal = await slipInput.innerText().catch(() => "");
+                            const currentVal = (
+                                (await slipInput.inputValue().catch(() => "")) ||
+                                (await slipInput.innerText().catch(() => "")) ||
+                                (await slipInput.getAttribute('value').catch(() => "")) ||
+                                ""
+                            );
                             if (!currentVal.includes("10")) {
                                 logWithStep(`⚠️ Amount not visible in UI, trying keyboard one last time...`);
-                                await slipInput.click({ clickCount: 3 }); // Select all
-                                await page.keyboard.press('Backspace');
-                                await page.keyboard.type("10", { delay: 100 });
+                                await slipInput.click({ clickCount: 3, timeout: 5000 }).catch(() => {}); // ป้องกันค้างหากโดนบดบัง
+                                await page.keyboard.press('Backspace').catch(() => {});
+                                await page.keyboard.type("10", { delay: 100 }).catch(() => {});
                             }
                             
                             // ==========================================
@@ -1306,11 +1337,36 @@ export class BrowserService {
 
         // --- เพิ่มส่วนการกรอกเงินและกดแทงจริง ---
         this.smartLog(`[AUTO-BET] 🛒 Opening cart slip...`);
-        const cartIcon = page.locator('[class*="sport-bet-cart-classname"], [class*="_bet-cart_"], i[data-src*="icon_ty_floatbtn.svg"]').first();
+        const cartIcon = page.locator(`
+            [class*="sport-bet-cart-classname"], 
+            [class*="_bet-cart_"], 
+            [class*="bet-cart"] img,
+            [class*="bet-cart"] i,
+            i[data-src*="icon_ty_floatbtn.svg"],
+            .ui-badge__wrapper img[src*="cart"],
+            .ui-badge__wrapper i,
+            .ui-badge__wrapper,
+            [class*="floatbtn"],
+            [class*="float-btn"]
+        `).first();
         await cartIcon.click({ force: true }).catch(() => cartIcon.evaluate((el: HTMLElement) => el.click()));
         await page.waitForTimeout(1500);
 
-        const slipInput = page.locator('input.ui-input__input, [class*="_input-box_"] input, .van-field__control').first();
+        const slipInput = page.locator(`
+            [class*="popup"] input,
+            [class*="popup"] .ui-input__input,
+            [class*="popup"] [class*="stake-input"],
+            [class*="popup"] [class*="amount-input"],
+            [class*="popup"] div[role="textbox"],
+            [class*="slip"] input,
+            [class*="slip"] .ui-input__input,
+            [class*="slip"] [class*="stake-input"],
+            [class*="slip"] [class*="amount-input"],
+            [class*="slip"] div[role="textbox"],
+            ._option_wlp6f_80, 
+            ._stake-container_15log_45, 
+            ._container_15log_69
+        `).first();
         if (await slipInput.isVisible({ timeout: 5000 })) {
             this.smartLog(`[AUTO-BET] 🔢 Entering amount: ${amount}`);
             await slipInput.click({ force: true }).catch(() => {});
