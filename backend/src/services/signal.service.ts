@@ -32,9 +32,9 @@ export class SignalService {
 
     // ถ้าราคาไหลลงเกิน 0.03 (ปรับให้สัญญาณออกถี่ขึ้นเพื่อเทสระบบตามคำขอ)
     if (diff >= 0.03) {
-      const reversedOdds = current.awayOdds || 1.8;
-      const betSide = match.awayTeam;
-      await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `📈 ต่อไหลแรง: ${match.homeTeam} ราคาลดเหลือ ${current.homeOdds} (ไหลลง ${diff.toFixed(2)}) 🔥 วางเดิมพัน ${betSide}`, reversedOdds, odds.line, betSide, odds.type);
+      const oddsAtBet = current.homeOdds || 1.8;
+      const betSide = match.homeTeam;
+      await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `📈 ต่อไหลแรง: ${match.homeTeam} ราคาลดเหลือ ${current.homeOdds} (ไหลลง ${diff.toFixed(2)}) 🔥 วางเดิมพัน ${betSide}`, oddsAtBet, odds.line, betSide, odds.type);
     }
   }
 
@@ -47,11 +47,11 @@ export class SignalService {
       const oldLine = parseFloat(history[history.length - 1].line || '0');
       
       const direction = currentLine > oldLine ? 'เพิ่มขึ้น' : 'ลดลง';
-      const betSide = direction === 'เพิ่มขึ้น' ? match.awayTeam : match.homeTeam;
-      const rec = `สวนไปที่ ${betSide}`;
-      const reversedOdds = direction === 'เพิ่มขึ้น' ? (history[0].awayOdds || 0.9) : (history[0].homeOdds || 0.9);
+      const betSide = direction === 'เพิ่มขึ้น' ? match.homeTeam : match.awayTeam;
+      const rec = `ตามไปที่ ${betSide}`;
+      const oddsAtBet = direction === 'เพิ่มขึ้น' ? (history[0].homeOdds || 0.9) : (history[0].awayOdds || 0.9);
       
-      await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `🚧 ขยับกำแพง: แต้มต่อ ${direction} (${history[history.length - 1].line} -> ${history[0].line}) 🔥 ${rec}`, reversedOdds, history[0].line, betSide, odds.type);
+      await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `🚧 ขยับกำแพง: แต้มต่อ ${direction} (${history[history.length - 1].line} -> ${history[0].line}) 🔥 ${rec}`, oddsAtBet, history[0].line, betSide, odds.type);
     }
   }
 
@@ -66,6 +66,11 @@ export class SignalService {
   }
 
   private static async createSignalAndBet(match: any, logicType: string, message: string, oddsAtBet: number, lineAtBet: string, betSide: string, oddsType: string) {
+    // ข้ามสัญญาณที่เป็นครึ่งแรก (First Half / FH) ทั้งหมดตามคำขอของผู้ใช้
+    if (oddsType.startsWith('FH')) {
+      return;
+    }
+
     const fullLogicType = `${logicType} [${lineAtBet}]`;
     const currentMinutes = parseInt(match.matchTime || '0');
     const isSecondHalf = currentMinutes > 45 || match.matchTime?.includes('2H');

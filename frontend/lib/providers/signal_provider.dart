@@ -21,7 +21,7 @@ class SignalProvider with ChangeNotifier {
   }
 
   void _initSocket() {
-    _socket = io.io('http://localhost:3000', <String, dynamic>{
+    _socket = io.io(ApiService.baseUrl, <String, dynamic>{
       'transports': ['websocket'],
       'autoConnect': true,
     });
@@ -113,7 +113,16 @@ class SignalProvider with ChangeNotifier {
 
     try {
       int count = 1;
-      final idsToProcess = _selectedSignalIds.toList();
+      
+      // แปลงเป็น List ของ Signal แล้วเรียงลำดับตามเวลาสร้างจากเก่าไปใหม่ (FIFO: ล่างขึ้นบน)
+      final signalsToProcess = _selectedSignalIds.map((id) {
+        return _signals.firstWhere((s) => s.id == id);
+      }).toList();
+      
+      // เรียงจากเวลาเก่าที่สุดไปใหม่ที่สุด (เก่าสุดอยู่ด้านล่างสุดของจอภาพ จะถูกรันก่อน)
+      signalsToProcess.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      
+      final idsToProcess = signalsToProcess.map((s) => s.id).toList();
       
       for (var id in idsToProcess) {
         final signal = _signals.firstWhere((s) => s.id == id);

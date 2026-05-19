@@ -194,6 +194,42 @@ class _BetHistoryScreenState extends State<BetHistoryScreen> {
                 } else if (mockBet.status == 'Pending') {
                   pendingBets.add(mockBet);
                 }
+              } else {
+                // ไม่มี Mock Bet ลิงก์อยู่ (เช่น ถูกล้าง DB หรือแทงเอง) แต่เดิมพันสำเร็จแล้ว ให้สร้างจำลองเพื่อขึ้น "รอลุ้น"
+                final tempMatch = FootballMatch(
+                  id: 0,
+                  name: realBet.matchName,
+                  leagueName: realBet.leagueName,
+                  homeTeam: realBet.matchName.split(' vs ').first,
+                  awayTeam: realBet.matchName.split(' vs ').length > 1 ? realBet.matchName.split(' vs ').last : '',
+                  startTime: realBet.createdAt,
+                  scoreHome: 0,
+                  scoreAway: 0,
+                  status: 'Live',
+                  matchTime: '',
+                );
+                final tempSignal = Signal(
+                  id: realBet.signalId ?? '',
+                  logicType: 'Restore',
+                  message: 'Restored bet side: ${realBet.betSide} line: ${realBet.lineAtBet}',
+                  matchTimeAtSignal: '',
+                  createdAt: realBet.createdAt,
+                  match: tempMatch,
+                );
+                final tempMock = Bet(
+                  id: realBet.id,
+                  signalId: realBet.signalId ?? '',
+                  matchId: 0,
+                  amount: amount,
+                  status: 'Pending',
+                  createdAt: realBet.createdAt,
+                  betSide: realBet.betSide,
+                  lineAtBet: realBet.lineAtBet,
+                  oddsAtBet: realBet.oddsAtBet,
+                  autoBetStatus: realBet.status,
+                  signal: tempSignal,
+                );
+                pendingBets.add(tempMock);
               }
             }
           }

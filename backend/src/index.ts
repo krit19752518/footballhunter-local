@@ -16,24 +16,30 @@ dotenv.config();
 
 // ระบบ Logging หลัก (Live)
 const logFile = path.join(__dirname, '../bot.log');
-const logStream = fs.createWriteStream(logFile, { flags: 'a' });
 
 // ระบบ Logging แยกสำหรับ Test
 const testLogFile = path.join(__dirname, '../testbot.log');
-const testLogStream = fs.createWriteStream(testLogFile, { flags: 'a' });
 
 export const log = (message: string) => {
   const timestamp = new Date().toLocaleString();
   const formattedMessage = `[${timestamp}] ${message}`;
   console.log(formattedMessage);
-  logStream.write(formattedMessage + '\n');
+  try {
+    fs.appendFileSync(logFile, formattedMessage + '\n', 'utf8');
+  } catch (e) {
+    console.error('Failed to write to bot.log:', e);
+  }
 };
 
 export const testLog = (message: string) => {
   const timestamp = new Date().toLocaleString();
   const formattedMessage = `[${timestamp}] ${message}`;
   console.log(formattedMessage);
-  testLogStream.write(formattedMessage + '\n');
+  try {
+    fs.appendFileSync(testLogFile, formattedMessage + '\n', 'utf8');
+  } catch (e) {
+    console.error('Failed to write to testbot.log:', e);
+  }
 };
 
 export const app = express();
@@ -53,7 +59,8 @@ app.get('/matches', async (req, res) => {
     });
     res.json(matches);
   } catch (error) {
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error('Error in GET /matches:', error);
+    res.status(500).json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -69,7 +76,8 @@ app.get('/signals', async (req, res) => {
     });
     res.json(signals);
   } catch (error) {
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error('Error in GET /signals:', error);
+    res.status(500).json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -82,7 +90,8 @@ app.get('/bets', async (req, res) => {
     });
     res.json(bets);
   } catch (error) {
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error('Error in GET /bets:', error);
+    res.status(500).json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -94,7 +103,8 @@ app.get('/bets/history', async (req, res) => {
     });
     res.json(bets);
   } catch (error) {
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error('Error in GET /bets/history:', error);
+    res.status(500).json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -106,7 +116,8 @@ app.get('/real-bets/history', async (req, res) => {
     });
     res.json(realBets);
   } catch (error) {
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error('Error in GET /real-bets/history:', error);
+    res.status(500).json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) });
   }
 });
 

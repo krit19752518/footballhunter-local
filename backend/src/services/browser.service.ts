@@ -29,6 +29,8 @@ export class BrowserService {
   static clearQueue() {
     this.queue = [];
     this.stopTest();
+    this.isProcessing = false;
+    this.isTestRunning = false;
   }
 
   static getTestLogs(lines: number = 30): string[] {
@@ -50,13 +52,26 @@ export class BrowserService {
     }
   }
 
-  // หยุดรอคำสั่ง Next จากผู้ใช้ (เฉพาะเวลาเทส)
+  // ดำเนินการอัตโนมัติ ไม่หยุดรอคำสั่ง Next แล้ว
   private static async waitStep(stepName: string) {
     if (!this.isTestRunning) return;
     
-    this.smartLog(`[STEP-PAUSE] ⏸️ หยุดรอที่ขั้นตอน: ${stepName}. กดปุ่ม NEXT STEP เพื่อไปต่อ...`);
+    this.smartLog(`[STEP-AUTO] 🤖 ดำเนินขั้นตอนอัตโนมัติ: ${stepName}`);
+    // รอหน่วงเวลาสั้นๆ 1.5 วินาทีเพื่อให้ผู้ใช้มองเห็นความคืบหน้าทัน
+    if (this.page) {
+        await this.page.waitForTimeout(1500).catch(() => {});
+    }
+  }
+
+  // จุดหยุดพิเศษเพื่อให้ผู้ใช้ตรวจสอบความถูกต้องของบิลก่อนกดเดิมพัน
+  private static async pauseForUserReview(stepName: string) {
+    if (!this.isTestRunning) return;
+    
+    this.smartLog(`[STEP-PAUSE] ⏸️ หยุดรอตรวจความถูกต้อง: ${stepName}`);
+    this.smartLog(`[STEP-PAUSE] 👉 กรุณาตรวจความถูกต้องบนเบราว์เซอร์สีดำ แล้วกดปุ่ม "NEXT STEP" สีเขียวบนหน้าจอเว็บบอร์ดเพื่อดำเนินการแทงเดิมพัน`);
+    
     return new Promise<void>((resolve) => {
-        this.nextStepResolver = resolve;
+      this.nextStepResolver = resolve;
     });
   }
 
@@ -110,9 +125,11 @@ export class BrowserService {
     if (this.browser) return;
 
     this.smartLog('[BROWSER] Launching Chromium...');
+    const isHeadless = process.env.HEADLESS === 'true';
+    this.smartLog(`[BROWSER] Headless Mode: ${isHeadless}`);
     this.browser = await chromium.launch({
-      headless: false, // เปิดหน้าจอให้ผู้ใช้เห็น
-      args: ['--start-maximized']
+      headless: isHeadless,
+      args: isHeadless ? [] : ['--start-maximized']
     });
 
     this.context = await this.browser.newContext({
@@ -239,6 +256,7 @@ export class BrowserService {
 
       // 2. ค้นหาด้วยชื่อลีกก่อน
       try {
+        await this.waitStep("1. กำลังจะคลิกปุ่มแว่นขยาย เพื่อเข้าไปหน้าค้นหาและพิมพ์ชื่อลีก");
         logWithStep(`🔍 Opening search tool for league: ${leagueName}`);
         await this.performSearch(page, leagueName);
         if (this.stopTestRequested) throw new Error("Test Stopped by user");
@@ -273,8 +291,8 @@ export class BrowserService {
       }
 
       if (matchRow) {
+        await this.waitStep("2. พบคู่แข่งขันในหน้าผลลัพธ์การค้นหาแล้ว กำลังจะคลิกเปิดหน้าดูราคา");
         logWithStep(`✅ Match found! Clicking to open odds page...`);
-        // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
         if (this.stopTestRequested) throw new Error("Test Stopped by user");
         await matchRow.scrollIntoViewIfNeeded().catch(() => {});
         await page.waitForTimeout(3000); // หน่วงเวลาเพิ่มเป็น 3 วินาทีตามขอ
@@ -388,11 +406,12 @@ export class BrowserService {
                     let targetBox: any = null;
 
                     // --- ระบบแยกฝั่ง (Home/Away Awareness) ---
-                    const homeTeam = task.matchName.split(' vs ')[0];
-                    const awayTeam = task.matchName.split(' vs ')[1];
-                    const isAwayBet = betSide.includes(awayTeam) || betSide.includes('ทีมเยือน');
+                    const teamParts = task.matchName.split(/\s+[vV][sS]\s+/);
+                    const homeTeam = teamParts[0] || "";
+                    const awayTeam = teamParts[1] || "";
+                    const isAwayBet = betSide.includes(awayTeam) || betSide.includes('ทีมเยือน') || (awayTeam.length > 0 && awayTeam.includes(betSide));
                     
-                    logWithStep(`🎯 Targeting ${isAwayBet ? 'AWAY' : 'HOME'} side for price ${formattedPrice}`);
+                    logWithStep(`🎯 Targeting ${isAwayBet ? 'AWAY' : 'HOME'} side for price ${formattedPrice} (Home: "${homeTeam}", Away: "${awayTeam}", BetSide: "${betSide}")`);
 
                     const allLabels = targetSection.locator('._bet-label_1ckm8_65, [class*="_bet-label_"]');
                     const labelCount = await allLabels.count();
@@ -439,6 +458,7 @@ export class BrowserService {
                             }
                         }
                         finalOdds = parseFloat(oddsText.replace(/[^0-9.]/g, '')) || 0.0;
+                        await this.waitStep(`3. พบอัตราต่อรอง (ราคา) ที่ต้องการแล้ว (${formattedPrice}) กำลังจะคลิกเพื่อเลือกเปิดสลิป`);
                         logWithStep(`[AUTO-BOT] 🎯 Found matching price! Odds: ${oddsText} (${finalOdds}). Clicking...`);
                         
                         if (this.stopTestRequested) throw new Error("Test Stopped by user");
@@ -509,6 +529,7 @@ export class BrowserService {
                         await slipInput.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
 
                         if (await slipInput.isVisible()) {
+                            await this.waitStep("4. เปิดสลิปเดิมพันแล้ว กำลังจะป้อนจำนวนเงิน 10 บาท");
                             logWithStep(`[AUTO-BOT] ✅ Bet Slip opened. Starting amount entry...`);
                             await slipInput.click({ force: true });
                             await page.waitForTimeout(2000); // เพิ่มเป็น 2 วินาที
@@ -567,13 +588,9 @@ export class BrowserService {
                             }
                             
                             // ==========================================
-                            // 🛑 DEBUG PAUSE: หยุดหลังกรอกเลข 10
+                            // 🛑 DEBUG PAUSE: หยุดหลังกรอกเลข 10 (ให้ผู้ใช้ตรวจสอบความถูกต้องก่อนกด NEXT STEP)
                             // ==========================================
-                            if (this.isTestRunning) {
-                                // await this.waitStep(...); // Removed for Full-Auto
-                            } else {
-                                await page.waitForTimeout(2000); // เพิ่มเป็น 2 วินาที
-                            }
+                            await this.pauseForUserReview("5. กรอกเงิน 10 บาทเรียบร้อยแล้ว กรุณาตรวจสอบความถูกต้องบนเบราว์เซอร์สีดำ แล้วคลิกปุ่มสีเขียว NEXT STEP บนเว็บบอร์ดเพื่อยืนยันเดิมพัน");
                             if (this.stopTestRequested) throw new Error("Test Stopped by user");
                             // ==========================================
 
@@ -605,6 +622,8 @@ export class BrowserService {
                                 logWithStep(`⏳ Waiting for bet confirmation (Success Screen)...`);
                                 await page.waitForTimeout(5000); 
                                 logWithStep(`✅ Betting process completed!`);
+                                
+                                await this.waitStep("6. แทงเดิมพันจำลองสำเร็จแล้ว กำลังจะล้างบิลและย้อนกลับหน้าหลัก");
 
                                 // Save successful real bet to db
                                 if (!isTest) {
@@ -696,6 +715,12 @@ export class BrowserService {
 
   // ฟังก์ชันช่วยย้อนกลับและปิด Popup (รองรับ Popup โบนัสและวงล้อ)
   private static async cleanupAndGoBack(page: Page) {
+    if (this.stopTestRequested) {
+      this.smartLog(`🧹 Fast cleanup: Stop requested. Navigating directly to main sports page...`);
+      await page.goto('https://www.bet5688q.com/home/sport/soccer', { waitUntil: 'domcontentloaded', timeout: 5000 }).catch(() => {});
+      return;
+    }
+    
     this.smartLog(`🧹 Cleaning up and returning to main page...`);
     
     // 0. ปิดหน้าต่าง "ส่งแล้ว" หรือ Dialog เดิมพัน (คลิกที่ Mask/Overlay)
@@ -787,6 +812,10 @@ export class BrowserService {
   static async findAndBet(leagueName: string, matchName: string, betSide: string, amount: number, targetLine?: string, isTest: boolean = false, taskId?: string) {
     // ถ้าไม่ใช่ Test และระบบไม่ Ready ให้ไม่รับงาน
     if (!isTest && !this.isReady) return;
+
+    if (isTest) {
+      this.isTestRunning = true;
+    }
 
     // เพิ่มงานเข้าคิวแทนการรันทันที
     this.smartLog(`[QUEUE] 📥 Added ${isTest ? 'TEST' : 'REAL'} signal to queue: ${matchName}`, isTest);
@@ -990,7 +1019,7 @@ export class BrowserService {
    */
   public static async extractLiveScore(page: any, homeKey: string, awayKey: string): Promise<{ scoreHome: number; scoreAway: number } | null> {
     try {
-      // วิธีการที่ 1: ค้นหาข้อความแบบยึดแพทเทิร์นทศนิยม/สกอร์ (เช่น "0 - 0", "1:2") ใน Header
+      // วิธีการที่ 1: ค้นหาข้อความแบบยึดแพทเทิร์นทศนิยม/สกอร์ (เช่น "0 - 0") ใน Header
       const scoreElements = page.locator('div, span, p');
       const count = await scoreElements.count().catch(() => 0);
       
@@ -1000,8 +1029,8 @@ export class BrowserService {
         if (!isVisible) continue;
         
         const text = await el.innerText().catch(() => "");
-        // มองหารูปแบบที่เหมือนสกอร์: เช่น "0 - 0", "1:2", "3 - 1"
-        const scorePattern = /^\s*(\d{1,2})\s*[-:]\s*(\d{1,2})\s*$/;
+        // มองหารูปแบบที่เหมือนสกอร์: เช่น "0 - 0", "3 - 1" (เน้นเครื่องหมายขีดกลาง เพื่อไม่ให้สับสนกับเวลาที่เป็น colon)
+        const scorePattern = /^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*$/;
         const match = text.match(scorePattern);
         if (match) {
           // ตรวจสอบตำแหน่งความน่าจะเป็น (เช่น อยู่แถวบน)
@@ -1009,6 +1038,12 @@ export class BrowserService {
           if (box && box.y < 350) { // ส่วนใหญ่ Header สกอร์จะอยู่บนสุดของจอภาพมือถือ
             const scoreHome = parseInt(match[1], 10);
             const scoreAway = parseInt(match[2], 10);
+            
+            // ป้องกันการจำแนกเวลาสับสนกับสกอร์ (สกอร์ฟุตบอลเป็นไปไม่ได้ที่จะเกิน 15 ลูกต่อทีม)
+            if (scoreHome > 15 || scoreAway > 15) {
+              continue;
+            }
+            
             this.smartLog(`[LIVE-SCORE] Found score via format pattern: ${scoreHome}-${scoreAway}`);
             return { scoreHome, scoreAway };
           }
@@ -1028,13 +1063,16 @@ export class BrowserService {
           return header ? (header as HTMLElement).innerText : document.body.innerText;
         }).catch(() => "");
 
-        // มองหารูปแบบสกอร์ในข้อความ Header เช่น "ทีม A 0 - 0 ทีม B" หรือมีตัวเลขเดี่ยวปะปน
-        const scoreMatches = headerText.match(/(\d{1,2})\s*[-:]\s*(\d{1,2})/);
+        // มองหารูปแบบสกอร์ในข้อความ Header เช่น "ทีม A 0 - 0 ทีม B" (ใช้ขีดกลาง ไม่ใช้ colon)
+        const scoreMatches = headerText.match(/(\d{1,2})\s*-\s*(\d{1,2})/);
         if (scoreMatches) {
           const scoreHome = parseInt(scoreMatches[1], 10);
           const scoreAway = parseInt(scoreMatches[2], 10);
-          this.smartLog(`[LIVE-SCORE] Found score via Header match: ${scoreHome}-${scoreAway}`);
-          return { scoreHome, scoreAway };
+          
+          if (scoreHome <= 15 && scoreAway <= 15) {
+            this.smartLog(`[LIVE-SCORE] Found score via Header match: ${scoreHome}-${scoreAway}`);
+            return { scoreHome, scoreAway };
+          }
         }
         
         // ค้นหาใน Parent หรือ Sibling ของชื่อทีม
@@ -1053,7 +1091,7 @@ export class BrowserService {
           return numbers.length > 0 ? parseInt(numbers[0], 10) : null;
         }, await awayTeamEl.elementHandle()).catch(() => null);
 
-        if (homeScore !== null && awayScore !== null) {
+        if (homeScore !== null && awayScore !== null && homeScore <= 15 && awayScore <= 15) {
           this.smartLog(`[LIVE-SCORE] Found score via relative siblings: ${homeScore}-${awayScore}`);
           return { scoreHome: homeScore, scoreAway: awayScore };
         }
@@ -1460,14 +1498,19 @@ export class BrowserService {
   private static isLineMatch(target: string, web: string): boolean {
     try {
       const parseValue = (val: string): number => {
-        const clean = val.replace(/[+]/g, '').trim();
+        const trimmed = val.trim();
+        const isNegative = trimmed.startsWith('-');
+        const clean = trimmed.replace(/[+-]/g, '').trim(); // Remove both + and - signs
+        let value = 0;
         if (clean.includes('/')) {
           const parts = clean.split('/').map(p => parseFloat(p.replace(/[^0-9.-]/g, '')));
           if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
-            return (parts[0] + parts[1]) / 2;
+            value = (parts[0] + parts[1]) / 2;
           }
+        } else {
+          value = parseFloat(clean.replace(/[^0-9.-]/g, ''));
         }
-        return parseFloat(clean.replace(/[^0-9.-]/g, ''));
+        return isNegative ? -value : value;
       };
 
       const tValue = parseValue(target);
