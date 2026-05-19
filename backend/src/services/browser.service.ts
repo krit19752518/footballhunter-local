@@ -24,7 +24,7 @@ export class BrowserService {
   }
 
   static getIsTestRunning() {
-    return this.isTestRunning;
+    return this.isTestRunning && this.currentTaskIsTest;
   }
 
   static clearQueue() {
@@ -69,6 +69,11 @@ export class BrowserService {
   // จุดหยุดพิเศษเพื่อให้ผู้ใช้ตรวจสอบความถูกต้องของบิลก่อนกดเดิมพัน
   private static async pauseForUserReview(stepName: string) {
     if (!this.isTestRunning) return;
+    
+    if (!this.currentTaskIsTest) {
+      this.smartLog(`[STEP-AUTO] 🤖 ข้ามขั้นตอนหยุดรอการตรวจสอบสำหรับแผงจริง (ดำเนินการวางเดิมพันอัตโนมัติทันที): ${stepName}`);
+      return;
+    }
     
     this.smartLog(`[STEP-PAUSE] ⏸️ หยุดรอตรวจความถูกต้อง: ${stepName}`);
     this.smartLog(`[STEP-PAUSE] 👉 กรุณาตรวจความถูกต้องบนเบราว์เซอร์สีดำ แล้วกดปุ่ม "NEXT STEP" สีเขียวบนหน้าจอเว็บบอร์ดเพื่อดำเนินการแทงเดิมพัน`);
@@ -413,24 +418,38 @@ export class BrowserService {
                     const teamParts = task.matchName.split(/\s+[vV][sS]\s+/);
                     const homeTeam = teamParts[0] || "";
                     const awayTeam = teamParts[1] || "";
-                    const isAwayBet = betSide.includes(awayTeam) || betSide.includes('ทีมเยือน') || (awayTeam.length > 0 && awayTeam.includes(betSide));
+                    
+                    let isAwayBet = false;
+                    if (isOU) {
+                        isAwayBet = betSide.includes('ต่ำ') || betSide.includes('Under') || betSide.includes('[ต่ำ]');
+                    } else {
+                        isAwayBet = betSide.includes(awayTeam) || betSide.includes('ทีมเยือน') || (awayTeam.length > 0 && awayTeam.includes(betSide));
+                    }
                     
                     logWithStep(`🎯 Targeting ${isAwayBet ? 'AWAY' : 'HOME'} side for price ${formattedPrice} (Home: "${homeTeam}", Away: "${awayTeam}", BetSide: "${betSide}")`);
 
                     const allLabels = targetSection.locator('._bet-label_1ckm8_65, [class*="_bet-label_"]');
                     const labelCount = await allLabels.count();
                     
-                    // ใน AH/OU มักจะมี 2 คอลัมน์ (0=Home, 1=Away) หรือ (0=Over, 1=Under)
-                    // เราจะวนหาตัวที่ตรงทั้งราคาและ "ฝั่ง"
+                    // คำนวณหาพิกัดกึ่งกลาง X ของ Section เพื่อระบุฝั่ง ซ้าย (Home/Over) vs ขวา (Away/Under) อย่างแม่นยำ
+                    const sectionBox = await targetSection.boundingBox().catch(() => null);
+                    const sectionCenterX = sectionBox ? (sectionBox.x + sectionBox.width / 2) : 0;
+                    
                     for (let j = 0; j < labelCount; j++) {
-                        const labelText = await allLabels.nth(j).innerText().catch(() => "");
+                        const label = allLabels.nth(j);
+                        const labelText = await label.innerText().catch(() => "");
                         if (this.isLineMatch(cleanTarget, labelText)) {
-                            // เช็คฝั่ง: AH มักมี 2 label ต่อแถว. j % 2 === 0 คือซ้าย (Home), j % 2 === 1 คือขวา (Away)
-                            const currentIsAway = (j % 2 === 1);
+                            const betBox = label.locator('xpath=ancestor::div[contains(@class, "_bet-box_")]').first();
+                            const betBoxBox = await betBox.boundingBox().catch(() => null);
                             
-                            // ถ้าฝั่งตรงกับที่ต้องการ หรือถ้าหาไม่เจอจริงๆ (กรณีมีคอลัมน์เดียว) ให้เลือกตัวนี้
+                            let currentIsAway = (j % 2 === 1); // fallback แบบใช้ตำแหน่ง Index
+                            if (betBoxBox && sectionCenterX > 0) {
+                                const boxCenterX = betBoxBox.x + betBoxBox.width / 2;
+                                currentIsAway = boxCenterX > sectionCenterX;
+                            }
+                            
                             if (currentIsAway === isAwayBet || labelCount === 1) {
-                                targetBox = allLabels.nth(j).locator('xpath=ancestor::div[contains(@class, "_bet-box_")]').first();
+                                targetBox = betBox;
                                 break;
                             }
                         }
