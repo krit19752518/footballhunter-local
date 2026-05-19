@@ -43,9 +43,19 @@ export class ApiService {
       console.log(`[API] Web Live Count: ${totalAvailable} | Real Soccer: ${realSoccer.length} | Virtual: ${virtualSoccer.length}`);
       
       return response.data;
-    } catch (error) {
-      console.error('Error fetching matches:', error);
-      throw error;
+    } catch (error: any) {
+      if (error.response) {
+        console.warn(`[API] Warning: Received ${error.response.status} from API (Gateway/Server Error). Retrying next cycle...`);
+      } else {
+        console.warn(`[API] Warning: API request failed (${error.message}). Retrying next cycle...`);
+      }
+      return {
+        success: false,
+        data: {
+          total: 0,
+          records: []
+        }
+      };
     }
   }
 }
