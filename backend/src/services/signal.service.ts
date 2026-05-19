@@ -28,13 +28,17 @@ export class SignalService {
     const current = history[0];
     const oldest = history[history.length - 1]; 
 
-    const diff = (oldest.homeOdds || 0) - (current.homeOdds || 0);
+    const homeDiff = (oldest.homeOdds || 0) - (current.homeOdds || 0);
+    const awayDiff = (oldest.awayOdds || 0) - (current.awayOdds || 0);
 
     // ถ้าราคาไหลลงเกิน 0.03 (ปรับให้สัญญาณออกถี่ขึ้นเพื่อเทสระบบตามคำขอ)
-    if (diff >= 0.03) {
-      const reversedOdds = current.awayOdds || 1.8;
+    // เปลี่ยนมาแทงสวน: ฝั่งไหนราคาไหลลง ให้แทงสวนอีกฝั่ง
+    if (homeDiff >= 0.03) {
       const betSide = match.awayTeam;
-      await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `📈 ต่อไหลแรง: ${match.homeTeam} ราคาลดเหลือ ${current.homeOdds} (ไหลลง ${diff.toFixed(2)}) 🔥 วางเดิมพัน ${betSide}`, reversedOdds, odds.line, betSide, odds.type);
+      await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `📈 น้ำไหลลงแรง: ${match.homeTeam} ราคาลดเหลือ ${current.homeOdds} (ไหลลง ${homeDiff.toFixed(2)}) 🔥 แทงสวนไปที่ ${betSide}`, current.awayOdds || 0.9, odds.line, betSide, odds.type);
+    } else if (awayDiff >= 0.03) {
+      const betSide = match.homeTeam;
+      await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `📈 น้ำไหลลงแรง: ${match.awayTeam} ราคาลดเหลือ ${current.awayOdds} (ไหลลง ${awayDiff.toFixed(2)}) 🔥 แทงสวนไปที่ ${betSide}`, current.homeOdds || 0.9, odds.line, betSide, odds.type);
     }
   }
 
@@ -47,11 +51,12 @@ export class SignalService {
       const oldLine = parseFloat(history[history.length - 1].line || '0');
       
       const direction = currentLine > oldLine ? 'เพิ่มขึ้น' : 'ลดลง';
+      // แทงสวน: แต้มต่อเพิ่ม (ทีมต่อเก่งขึ้น) ให้แทงทีมรอง(เยือน), แต้มต่อลด (ทีมรองดูดีขึ้น) ให้แทงทีมต่อ(เหย้า)
       const betSide = direction === 'เพิ่มขึ้น' ? match.awayTeam : match.homeTeam;
-      const rec = `สวนไปที่ ${betSide}`;
-      const reversedOdds = direction === 'เพิ่มขึ้น' ? (history[0].awayOdds || 0.9) : (history[0].homeOdds || 0.9);
+      const rec = `แทงสวนไปที่ ${betSide}`;
+      const betOdds = direction === 'เพิ่มขึ้น' ? (history[0].awayOdds || 0.9) : (history[0].homeOdds || 0.9);
       
-      await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `🚧 ขยับกำแพง: แต้มต่อ ${direction} (${history[history.length - 1].line} -> ${history[0].line}) 🔥 ${rec}`, reversedOdds, history[0].line, betSide, odds.type);
+      await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `🚧 ขยับกำแพง: แต้มต่อ ${direction} (${history[history.length - 1].line} -> ${history[0].line}) 🔥 ${rec}`, betOdds, history[0].line, betSide, odds.type);
     }
   }
 
@@ -59,9 +64,9 @@ export class SignalService {
     const minutes = parseInt(match.matchTime || '0');
     
     if (match.status === 'Live' && odds.line === '0.5' && minutes >= 75 && (odds.overOdds || 0) < 2.0) {
-      const targetOdds = odds.overOdds || 1.8;
-      const betSide = '[สูง]';
-      await this.createSignalAndBet(match, 'สูง/ต่ำ (O/U)', `⏱️ สูงท้ายเกม: ${match.name} สูง 0.5 ราคา ${targetOdds} 🔥 กด ${betSide} ทันที`, targetOdds, odds.line, betSide, odds.type);
+      const targetOdds = odds.underOdds || 1.8;
+      const betSide = '[ต่ำ]';
+      await this.createSignalAndBet(match, 'สูง/ต่ำ (O/U)', `⏱️ สูงท้ายเกม: ${match.name} สูง 0.5 ราคา ${odds.overOdds || 1.8} 🔥 สวนกด ${betSide} ทันที`, targetOdds, odds.line, betSide, odds.type);
     }
   }
 
@@ -123,7 +128,8 @@ export class SignalService {
           logicType: fullLogicType, 
           message: finalMessage,
           matchTimeAtSignal: match.matchTime || '0',
-          period: period
+          period: period,
+          value: `${match.scoreHome}-${match.scoreAway}`
         }
       });
       

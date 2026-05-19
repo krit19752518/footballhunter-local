@@ -114,6 +114,11 @@ app.get('/browser/status', (req, res) => {
   res.json({ isReady: BrowserService.getStatus() });
 });
 
+app.get('/browser/balance', async (req, res) => {
+  const balance = await BrowserService.getActualBalance();
+  res.json({ balance: balance || BrowserService.getCachedBalance() });
+});
+
 app.post('/browser/ready', (req, res) => {
   const { ready } = req.body;
   BrowserService.setReady(ready);
@@ -123,27 +128,28 @@ app.post('/browser/ready', (req, res) => {
 app.post('/browser/test-bot', async (req, res) => {
   try {
     const { 
-      leagueName = 'นิวซีแลนด์ เซ็นทรัลลีก', 
-      matchName = 'วอเตอร์ไซด์ คารอรี่ vs เวสเทิร์น ซับเบอร์บ เอฟซี', 
-      betSide = 'วอเตอร์ไซด์ คารอรี่', 
+      leagueName = 'เอธิโอเปีย พรีเมียร์ ลิก', 
+      matchName = 'เอธิโอเปีย เมดิน vs โวไลตตา ดิชา', 
+      betSide = 'โวไลตตา ดิชา', 
       amount = 10, 
-      targetLine = '+0/0.5' 
-    } = req.body;
+      targetLine = '0',
+      isTest = true
+    } = req.body || {};
 
     log(`[TEST-BOT] 🧪 Triggering dynamic test bot: ${matchName}`);
     
-    // ส่งเข้าคิวงานของบอท โดยระบุว่าเป็น Test (isTest = true)
+    // ส่งเข้าคิวงานของบอท
     await BrowserService.findAndBet(
       leagueName,
       matchName,
       betSide,
       amount,
       targetLine,
-      true, // isTest = true
-      'test-task-id' // dummy taskId
+      isTest, 
+      'dummy-task-id-123'
     );
 
-    res.json({ success: true, message: 'Test bot triggered', data: { leagueName, matchName, betSide, amount, targetLine } });
+    res.json({ success: true, message: 'Test bot triggered', data: { leagueName, matchName, betSide, amount, targetLine, isTest } });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

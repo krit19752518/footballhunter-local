@@ -6,7 +6,7 @@ import prisma from '../lib/prisma';
 export class BrowserService {
   private static browser: Browser | null = null;
   private static context: BrowserContext | null = null;
-  private static page: Page | null = null;
+  public static page: Page | null = null;
   private static isReady: boolean = false;
   private static isProcessing: boolean = false;
   private static queue: any[] = []; // คิวงานที่รอประมวลผล
@@ -15,6 +15,8 @@ export class BrowserService {
   private static isTestRunning: boolean = false; // สำหรับเลือกไฟล์ Log
   private static nextStepResolver: (() => void) | null = null;
   private static stopTestRequested: boolean = false;
+  private static lastBalance: number | null = null;
+  private static lastBalanceTime: number = 0;
 
   static isQueueEmpty() {
     return this.queue.length === 0 && !this.isTestRunning;
@@ -51,6 +53,9 @@ export class BrowserService {
   // หยุดรอคำสั่ง Next จากผู้ใช้ (เฉพาะเวลาเทส)
   private static async waitStep(stepName: string) {
     if (!this.isTestRunning) return;
+    
+    // ตั้งค่าให้หยุดรอ (Pause) เฉพาะขั้นตอนหลังจากกรอกยอดเงินเสร็จเท่านั้น
+    if (stepName !== "Bet Amount Entered successfully") return;
     
     this.smartLog(`[STEP-PAUSE] ⏸️ หยุดรอที่ขั้นตอน: ${stepName}. กดปุ่ม NEXT STEP เพื่อไปต่อ...`);
     return new Promise<void>((resolve) => {
@@ -104,6 +109,30 @@ export class BrowserService {
     return prefix + num.toString();
   }
 
+  private static matchTeam(target: string, web: string): boolean {
+    const cleanWord = (w: string) => w.toLowerCase().replace(/[^a-zA-Z0-9ก-๙]/g, '').trim();
+    const targetWords = target.split(/\s+/).map(cleanWord).filter(w => w.length > 0 && w !== 'vs');
+    const webWords = web.split(/\s+/).map(cleanWord).filter(w => w.length > 0 && w !== 'vs');
+
+    if (targetWords.length === 0 || webWords.length === 0) return false;
+
+    let matchCount = 0;
+    const skipList = ['สโมสรฟุตบอล', 'สโมสร', 'เอฟซี', 'fc', 'united', 'club', 'team', 'u', 'u19', 'u20', 'u21', 'u23', 'ทีม'];
+    for (const webW of webWords) {
+      if (skipList.includes(webW)) continue;
+      
+      const matched = targetWords.some(targetW => {
+        if (skipList.includes(targetW)) return false;
+        return (targetW.startsWith(webW) || webW.startsWith(targetW)) && Math.min(targetW.length, webW.length) >= 2;
+      });
+
+      if (matched) {
+        matchCount++;
+      }
+    }
+    return matchCount >= 1;
+  }
+
   static async init() {
     if (this.browser) return;
 
@@ -150,6 +179,11 @@ export class BrowserService {
 
     this.smartLog(`[QUEUE] 🔄 Starting queue processor interval (every 5s)...`, isTest);
     this.queueInterval = setInterval(async () => {
+      // ดึงยอดเงินสดสะสมคงเหลือล่าสุดหากไม่ได้กำลังประมวลผลการแทง
+      if (!this.isProcessing && this.page) {
+        await this.getActualBalance().catch(() => {});
+      }
+
       if (this.isProcessing) return;
       if (this.queue.length === 0) return;
 
@@ -193,446 +227,267 @@ export class BrowserService {
     const { leagueName, matchName, betSide, amount, targetLine, isTest, taskId } = task;
     const page: any = this.page;
 
-      this.isProcessing = true;
-      this.isTestRunning = !!isTest;
-      this.stopTestRequested = false;
-      let step = 1;
-      const logWithStep = (msg: string) => {
-        this.smartLog(`[Step ${step++}] ${msg}`, isTest);
-      };
+    this.isProcessing = true;
+    this.isTestRunning = !!isTest;
+    this.stopTestRequested = false;
+    let step = 1;
+    const logWithStep = (msg: string) => {
+      this.smartLog(`[Step ${step++}] ${msg}`, isTest);
+    };
 
-      let finalOdds = 0.0;
+    try {
+      logWithStep(`🚀 Starting TEST Auto-Bot process for: ${matchName}`);
 
-      try {
-        logWithStep(`🚀 Starting ${this.isTestRunning ? 'TEST' : 'REAL'} process for: ${matchName}`);
+      // Wait for page layout stabilization
+      logWithStep(`💤 Waiting 3s for page layout to stabilize...`);
+      await page.waitForTimeout(3000);
 
-        // หน่วงเวลาเตรียมความพร้อมก่อนเริ่มต้นการทำงานจริง (Stabilization Delay)
-        logWithStep(`💤 Waiting 3s for page layout to stabilize before starting...`);
-        await page.waitForTimeout(3000);
+      await this.waitStep("Start Auto-Bot Test");
+      if (this.stopTestRequested) throw new Error("Test Stopped by user");
 
-        // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
-        if (this.stopTestRequested) throw new Error("Test Stopped by user");
+      // 0. Ensure Football category is selected
+      logWithStep(`Ensuring "Football" category is selected...`);
+      const footballTab = page.locator('div, span, a, li').filter({ hasText: /^ฟุตบอล$/ }).first();
+      const isFootballActive = await footballTab.evaluate((el: any) => {
+        return el.classList.contains('active') || el.style.color !== '';
+      }).catch(() => false);
 
-      // 1. เตรียมชื่อทีมสำหรับค้นหา
+      if (!isFootballActive) {
+        logWithStep(`Switching to Football tab...`);
+        await footballTab.click().catch(() => { });
+        await page.waitForTimeout(1500);
+      }
+
+      await this.waitStep("Football Category Selected");
+      if (this.stopTestRequested) throw new Error("Test Stopped by user");
+
+      // 0. Clean team names
       const cleanName = (name: string) => {
         if (!name) return "";
-        return name.replace(/\[.*?\]/g, '').replace(/สโมสรฟุตบอล|สโมสร|เอฟซี|ยูไนเต็ด|U\d+|[\(\)]/g, '').trim();
+        return name
+          .replace(/\[.*?\]/g, '')
+          .replace(/สโมสรฟุตบอล|สโมสร|เอฟซี|ยูไนเต็ด|U\d+|[\(\)]/g, '')
+          .trim();
       };
 
       const getUniqueKey = (name: string) => {
         const cleaned = cleanName(name);
-        const words = cleaned.split(/\s+/).filter(w => w.length > 2);
-        return words.length === 0 ? cleaned.substring(0, 5) : words.sort((a, b) => b.length - a.length)[0];
+        const words = cleaned.split(/\s+/).filter((w: string) => w.length > 2);
+        if (words.length === 0) return cleaned.substring(0, 5);
+        return words.sort((a: string, b: string) => b.length - a.length)[0];
       };
 
       const homeTeam = matchName.split(' vs ')[0];
       const awayTeam = matchName.split(' vs ')[1];
+      const homeClean = cleanName(homeTeam);
+      const awayClean = cleanName(awayTeam);
       const homeKey = getUniqueKey(homeTeam);
       const awayKey = getUniqueKey(awayTeam);
+      const betSideClean = cleanName(betSide);
 
-      // 2. ค้นหาด้วยชื่อลีกก่อน
-      try {
-        logWithStep(`🔍 Opening search tool for league: ${leagueName}`);
-        await this.performSearch(page, leagueName);
-        if (this.stopTestRequested) throw new Error("Test Stopped by user");
-        await page.waitForTimeout(3000); // ให้เวลาผลลัพธ์โหลด
-      } catch (e: any) {
-        throw new Error(`League Search Failed: ${e.message}`);
-      }
+      // 1. ALWAYS go straight to the Search page directly
+      logWithStep(`🔍 Going straight to Search page to find League: "${leagueName}"`);
+      await this.useSearchFallback(page, leagueName);
 
-      // 3. ค้นหาคู่บอลในผลลัพธ์ที่ปรากฏ (รอสูงสุด 5 วินาที)
-      logWithStep(`🔍 Scanning for match: ${homeKey} vs ${awayKey}`);
-      let matchRow: any = null;
-      let found = false;
+      await this.waitStep("League Expanded successfully");
+      if (this.stopTestRequested) throw new Error("Test Stopped by user");
 
-      for (let retry = 0; retry < 10; retry++) { // 10 รอบ รอบละ 1s = 10 วินาที
-          const possibleRows = page.locator('div, li, a').filter({ hasText: homeKey }).filter({ hasText: awayKey });
-          const count = await possibleRows.count();
-          
-          for (let i = 0; i < count; i++) {
-            const candidate = possibleRows.nth(i);
-            if (await candidate.isVisible()) {
-              const box = await candidate.boundingBox();
-              if (box && box.height > 30) { 
-                matchRow = candidate;
-                found = true;
-                break;
-              }
+      // 2. Scan for match row inside search results
+      logWithStep(`Scanning for Match Row inside ${leagueName}...`);
+      let foundMatch = false;
+      let matchRow = null;
+
+      for (let i = 0; i < 10; i++) {
+        const candidateRows = await page.locator('.match-item, .match-row, .game-item, [class*="match-item"], [class*="game-item"]').all();
+        for (const row of candidateRows) {
+          const teamNameElements = await row.locator('._team-name_15ywe_182, [class*="team-name"]').all();
+          if (teamNameElements.length >= 2) {
+            const webHome = await teamNameElements[0].innerText().catch(() => "");
+            const webAway = await teamNameElements[1].innerText().catch(() => "");
+            
+            if (this.matchTeam(homeTeam, webHome) && this.matchTeam(awayTeam, webAway)) {
+              matchRow = row;
+              foundMatch = true;
+              break;
             }
           }
-          
-          if (found) break;
-          await page.waitForTimeout(1000); // เพิ่มเป็น 1 วินาที
+        }
+
+        if (foundMatch && matchRow) {
+          logWithStep(`✅ Success! Match Found within search results.`);
+          await matchRow.scrollIntoViewIfNeeded().catch(() => { });
+          await page.waitForTimeout(500);
+          break;
+        }
+        await page.mouse.wheel(0, 400);
+        await page.waitForTimeout(800);
       }
 
-      if (matchRow) {
-        logWithStep(`✅ Match found! Clicking to open odds page...`);
-        // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
-        if (this.stopTestRequested) throw new Error("Test Stopped by user");
-        await matchRow.scrollIntoViewIfNeeded().catch(() => {});
-        await page.waitForTimeout(3000); // หน่วงเวลาเพิ่มเป็น 3 วินาทีตามขอ
+      if (!foundMatch || !matchRow) {
+        throw new Error(`Could not find match row in search results for "${homeTeam}" vs "${awayTeam}" after 5s.`);
+      }
 
-        // พยายามคลิกจุดกึ่งกลางของแถว หรือหาปุ่ม/ลิงก์ภายใน
-        const clickTargets = matchRow.locator('div[class*="_center_"], .match-link, a, .team-name').first();
-        if (await clickTargets.isVisible()) {
-           await clickTargets.click({ force: true, timeout: 3000 }).catch(() => matchRow.click({ force: true }));
-        } else {
-           await matchRow.click({ force: true }).catch(() => {});
-        }
-        
-        // รอเช็คว่าหน้าเปลี่ยนจริงไหม (เช็คคำที่เป็นเอกลักษณ์ของหน้าราคา)
-        let arrived = false;
-        for (let i = 0; i < 15; i++) { // เพิ่มเป็น ~10-12 วินาที
-            await page.waitForTimeout(1500); // เพิ่มจาก 800ms เป็น 1500ms
-            const isOddsPage = await page.locator('div, span').filter({ hasText: /แฮนดิแคป|สูง\/ต่ำ|Handicap|1x2|ไม่พบข้อมูลเป็นการชั่วคราว/ }).first().isVisible().catch(() => false);
-            if (isOddsPage) {
-                arrived = true;
-                break;
-            }
-            await page.waitForTimeout(1500); // เพิ่มจาก 1000ms เป็น 1500ms
-            // ถ้ายังไม่เปลี่ยนหน้า ลองใช้ JS Click ซ้ำที่ตัวแถว
-            if (i % 5 === 0 && i > 0) { // ลอง JS Click ทุกๆ 5 รอบ
-                logWithStep(`[AUTO-BOT] ⚠️ Not moved yet, trying different click points...`);
-                // ลองคลิกหลายๆ จุด (ซ้าย, กลาง, ขวา)
-                await matchRow.evaluate((el: HTMLElement) => {
-                    el.click(); // คลิกปกติ
-                    const box = el.getBoundingClientRect();
-                    const event = new MouseEvent('click', { view: window, bubbles: true, cancelable: true, clientX: box.left + 20, clientY: box.top + 10 });
-                    el.dispatchEvent(event);
-                }).catch(() => {});
-            }
-            if (i === 12) { // ถ้ารอนานเกินไป (ประมาณ 15-20 วินาที) ให้ลอง Reload หน้าเว็บ
-                logWithStep(`[AUTO-BOT] 🚨 STUCK DETECTED! Force reloading page...`);
-                await page.reload().catch(() => {});
-                await page.waitForTimeout(6000); // รอหน้าโหลดใหม่เพิ่มเป็น 6 วินาที
-                break; // ออกจาก Loop เพื่อให้งานนี้พังไป แล้วเริ่มงานใหม่จากหน้าหลัก
-            }
-        }
+      await this.waitStep("Match Row Found successfully");
+      if (this.stopTestRequested) throw new Error("Test Stopped by user");
 
-        if (arrived) {
-            logWithStep(`🚩 Arrived at Odds Page. Waiting 5s for stabilization...`);
-            await page.waitForTimeout(5000); // หน่วงเวลาเพิ่มเป็น 5 วินาที
-            const formattedPrice = BrowserService.formatLine(targetLine || "0");
-            logWithStep(`🔍 Searching for price: ${formattedPrice}`);
-            
-            // 1. ระบุชื่อหัวข้อ Section ที่ต้องการ
-            const isFH = betSide.includes('ครึ่งแรก') || task.matchName.includes('ครึ่งแรก') || (targetLine && targetLine.includes('ครึ่งแรก'));
-            const isOU = betSide.includes('สูง') || betSide.includes('ต่ำ');
-            
-            let sectionTitle = isOU ? 'สูง/ต่ำ' : 'แฮนดิแคป';
-            if (isFH) sectionTitle += '-ครึ่งแรก';
+      // 3. Determine bet target columns and rows
+      logWithStep(`Finding match "${matchName}" details...`);
 
-            logWithStep(`🔍 Looking for Section: "${sectionTitle}"`);
+      let columnIndex = 0;
+      let rowIndex = 0;
 
-            // 2. ค้นหา Section และคลิกเลือกราคา
-            try {
-                let targetSection: any = null;
+      const hasUnderdogText = betSide.includes('รอง') || betSide.includes('Underdog');
+      const hasAwayName = betSideClean.includes(awayClean) || awayClean.includes(betSideClean);
+      const isOver = betSide.includes('สูง') || betSide.includes('Over');
+      const isUnder = betSide.includes('ต่ำ') || betSide.includes('Under');
 
-                // ลองค้นหา Section ซ้ำเพื่อรอให้ข้อมูลโหลด
-                for (let retry = 0; retry < 5; retry++) {
-                    const sections = page.locator('.ui-collapse-item');
-                    const count = await sections.count();
-                    
-                    for (let i = 0; i < count; i++) {
-                        // ค้นหาข้อความ Title ภายใน Section (ไม่ยึดติดกับ Class Name)
-                        const titleText = await sections.nth(i).innerText().catch(() => "");
-                        if (titleText.split('\n')[0].includes(sectionTitle)) {
-                            targetSection = sections.nth(i);
-                            break;
-                        }
-                    }
-                    
-                    if (targetSection) break;
-                    await page.waitForTimeout(1500); // เพิ่มเป็น 1.5 วินาที
-                }
+      logWithStep(` - Flags: hasUnderdogText = ${hasUnderdogText}, hasAwayName = ${hasAwayName}, isOver = ${isOver}, isUnder = ${isUnder}`);
 
-                if (targetSection) {
-                    logWithStep(`✅ Found Section: ${sectionTitle}`);
-                    const formattedPrice = BrowserService.formatLine(targetLine || "0");
-                    // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
-                    if (this.stopTestRequested) throw new Error("Test Stopped by user");
-                    
-                    const cleanTarget = (targetLine || "").replace(/[\[\]]/g, '').trim();
-                    let targetBox: any = null;
-
-                    // --- ระบบแยกฝั่ง (Home/Away Awareness) ---
-                    const homeTeam = task.matchName.split(' vs ')[0];
-                    const awayTeam = task.matchName.split(' vs ')[1];
-                    const isAwayBet = betSide.includes(awayTeam) || betSide.includes('ทีมเยือน');
-                    
-                    logWithStep(`🎯 Targeting ${isAwayBet ? 'AWAY' : 'HOME'} side for price ${formattedPrice}`);
-
-                    const allLabels = targetSection.locator('._bet-label_1ckm8_65, [class*="_bet-label_"]');
-                    const labelCount = await allLabels.count();
-                    
-                    // ใน AH/OU มักจะมี 2 คอลัมน์ (0=Home, 1=Away) หรือ (0=Over, 1=Under)
-                    // เราจะวนหาตัวที่ตรงทั้งราคาและ "ฝั่ง"
-                    for (let j = 0; j < labelCount; j++) {
-                        const labelText = await allLabels.nth(j).innerText().catch(() => "");
-                        if (this.isLineMatch(cleanTarget, labelText)) {
-                            // เช็คฝั่ง: AH มักมี 2 label ต่อแถว. j % 2 === 0 คือซ้าย (Home), j % 2 === 1 คือขวา (Away)
-                            const currentIsAway = (j % 2 === 1);
-                            
-                            // ถ้าฝั่งตรงกับที่ต้องการ หรือถ้าหาไม่เจอจริงๆ (กรณีมีคอลัมน์เดียว) ให้เลือกตัวนี้
-                            if (currentIsAway === isAwayBet || labelCount === 1) {
-                                targetBox = allLabels.nth(j).locator('xpath=ancestor::div[contains(@class, "_bet-box_")]').first();
-                                break;
-                            }
-                        }
-                    }
-                    
-                    // Fallback: ถ้าหาแบบเช็คฝั่งไม่เจอ ให้เอาตัวที่ราคาตรงตัวแรก (กันเหนียว)
-                    if (!targetBox) {
-                        for (let j = 0; j < labelCount; j++) {
-                            const labelText = await allLabels.nth(j).innerText().catch(() => "");
-                            if (this.isLineMatch(cleanTarget, labelText)) {
-                                targetBox = allLabels.nth(j).locator('xpath=ancestor::div[contains(@class, "_bet-box_")]').first();
-                                break;
-                            }
-                        }
-                    }
-
-                    if (targetBox) {
-                        let oddsText = await targetBox.locator('[class*="_odds_"], [class*="odds"]').innerText().catch(() => "N/A");
-                        if (oddsText === "N/A" || oddsText.trim() === "" || isNaN(parseFloat(oddsText.replace(/[^0-9.]/g, '')))) {
-                            // Self-healing fallback: scan all sub-elements for a decimal odds number
-                            const allElements = await targetBox.locator('span, div, p').all();
-                            for (const el of allElements) {
-                                const text = await el.innerText().catch(() => "");
-                                const num = parseFloat(text.replace(/[^0-9.]/g, ''));
-                                if (!isNaN(num) && num >= 1.01 && num <= 20.0) {
-                                    oddsText = text;
-                                    break;
-                                }
-                            }
-                        }
-                        finalOdds = parseFloat(oddsText.replace(/[^0-9.]/g, '')) || 0.0;
-                        logWithStep(`[AUTO-BOT] 🎯 Found matching price! Odds: ${oddsText} (${finalOdds}). Clicking...`);
-                        
-                        if (this.stopTestRequested) throw new Error("Test Stopped by user");
-                        await targetBox.click({ force: true });
-                        await page.waitForTimeout(3000); // หน่วงเวลาเพิ่มเป็น 3 วินาที
-
-                        logWithStep(`[AUTO-BOT] 🛒 Checking if Bet Slip is already open...`);
-                        const amountInput = page.locator('._option_wlp6f_80, ._stake-container_15log_45, ._container_15log_69, .ui-input__input').first();
-                        
-                        // ปรับปรุง Selector ตระกร้าให้ครอบคลุมขึ้น
-                        const cartIcon = page.locator(`
-                            [class*="sport-bet-cart-classname"], 
-                            [class*="_bet-cart_"], 
-                            [class*="bet-cart"],
-                            i[data-src*="icon_ty_floatbtn.svg"],
-                            .ui-badge__wrapper img[src*="cart"],
-                            div[class*="cart"]
-                        `).first();
-
-                        // 1.5 ลบเลเยอร์บังหน้าก่อนคลิกตระกร้า
-                        await page.evaluate(() => {
-                            document.querySelectorAll('.ui-mask, .ui-overlay, ._mask_').forEach(el => el.remove());
-                        }).catch(() => {});
-
-                        // ถ้ายังไม่เห็นช่องใส่เงิน ให้ลองเปิดตระกร้า
-                        if (!(await amountInput.isVisible())) {
-                            logWithStep(`🔍 Waiting for cart icon to appear...`);
-                            await cartIcon.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
-
-                            if (await cartIcon.isVisible()) {
-                                // // await this.waitStep(...); // Removed for Full-Auto // Removed for Full-Auto
-                                if (this.stopTestRequested) throw new Error("Test Stopped by user");
-
-                                logWithStep(`🖱️ Slip not open, clicking cart icon...`);
-                                // ลองคลิกหลายๆ แบบเพื่อให้มั่นใจ
-                                await cartIcon.click({ force: true }).catch(async () => {
-                                    await cartIcon.evaluate((el: HTMLElement) => el.click()).catch(() => {});
-                                });
-                                
-                                await page.waitForTimeout(2000); // เพิ่มเป็น 2 วินาที
-                                
-                                // ถ้ายังไม่เปิด ลองคลิกที่พิกัด (ตระกร้าสีเหลืองมักอยู่ขวาล่าง หรือข้างๆ ราคา)
-                                if (!(await amountInput.isVisible())) {
-                                    const box = await cartIcon.boundingBox();
-                                    if (box) {
-                                        logWithStep(`🖱️ Trying coordinate click on cart icon...`);
-                                        await page.mouse.click(box.x + box.width/2, box.y + box.height/2);
-                                    }
-                                }
-                                await page.waitForTimeout(3000); // เพิ่มเป็น 3 วินาที
-                            } else {
-                                logWithStep(`⚠️ Cart icon not found after waiting.`);
-                            }
-                        }
-
-
-                        // รอให้ช่องใส่เงินปรากฏ (ขยาย Selector ให้ครอบคลุมมากขึ้น)
-                        const slipInput = page.locator(`
-                            ._option_wlp6f_80, 
-                            ._stake-container_15log_45, 
-                            ._container_15log_69, 
-                            .ui-input__input,
-                            [class*="stake-input"],
-                            [class*="amount-input"],
-                            div[role="textbox"]
-                        `).first();
-
-                        await slipInput.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
-
-                        if (await slipInput.isVisible()) {
-                            logWithStep(`[AUTO-BOT] ✅ Bet Slip opened. Starting amount entry...`);
-                            await slipInput.click({ force: true });
-                            await page.waitForTimeout(2000); // เพิ่มเป็น 2 วินาที
-
-                            // 2. กดเลข 1 และเลข 0 บน Keyboard/Keypad
-                            logWithStep(`🔢 Typing "1" and "0" via keypad...`);
-                            
-                            // คลิกช่อง Input เพื่อความมั่นใจ
-                            await slipInput.click({ force: true }).catch(() => {});
-                            await page.waitForTimeout(2000); // เพิ่มเป็น 2 วินาที
-
-                            // หา Container ของคีย์บอร์ด (รองรับทั้ง keypad และ keyboard)
-                            const keypad = page.locator('.van-keypad, .ui-keypad, [class*="keypad"], [class*="keyboard"]').first();
-                            
-                            const getKey = (num: string) => {
-                                // พยายามหาปุ่มที่มีตัวเลขนั้นๆ (เน้นหาจาก ui-button__text หรือ text ตรงๆ)
-                                return keypad.locator('.ui-button__text, .ui-button, span, div, button')
-                                    .filter({ hasText: new RegExp(`^${num}$`) })
-                                    .first();
-                            };
-
-                            try {
-                                if (await keypad.isVisible({ timeout: 3000 })) {
-                                    const btn1 = getKey("1");
-                                    const btn0 = getKey("0");
-                                    
-                                    if (await btn1.isVisible()) {
-                                        await btn1.click({ force: true });
-                                        await page.waitForTimeout(1000); // หน่วง 1 วินาที
-                                        if (await btn0.isVisible()) {
-                                            await btn0.click({ force: true });
-                                            await page.waitForTimeout(1000); // หน่วง 1 วินาที
-                                        }
-                                    } else {
-                                        logWithStep(`⚠️ Buttons 1/0 not visible in keyboard, trying manual type...`);
-                                        await page.keyboard.type("10", { delay: 100 });
-                                    }
-                                } else {
-                                    logWithStep(`⚠️ Keyboard container not found, trying manual type...`);
-                                    await page.keyboard.type("10", { delay: 100 });
-                                }
-                            } catch (e) {
-                                logWithStep(`⚠️ Interaction failed, using keyboard fallback: ${e}`);
-                                await page.keyboard.type("10", { delay: 100 });
-                            }
-                            
-                            await page.waitForTimeout(2000); // เพิ่มเป็น 2 วินาที
-
-                            // ตรวจสอบว่าเงินเข้าไหม (ถ้าหา value ได้)
-                            const currentVal = await slipInput.innerText().catch(() => "");
-                            if (!currentVal.includes("10")) {
-                                logWithStep(`⚠️ Amount not visible in UI, trying keyboard one last time...`);
-                                await slipInput.click({ clickCount: 3 }); // Select all
-                                await page.keyboard.press('Backspace');
-                                await page.keyboard.type("10", { delay: 100 });
-                            }
-                            
-                            // ==========================================
-                            // 🛑 DEBUG PAUSE: หยุดหลังกรอกเลข 10
-                            // ==========================================
-                            if (this.isTestRunning) {
-                                // await this.waitStep(...); // Removed for Full-Auto
-                            } else {
-                                await page.waitForTimeout(2000); // เพิ่มเป็น 2 วินาที
-                            }
-                            if (this.stopTestRequested) throw new Error("Test Stopped by user");
-                            // ==========================================
-
-                            await page.waitForTimeout(2000); 
-
-                            // 3. คลิกปุ่ม "พนัน" (Confirm Bet)
-                            let betBtn: any = null;
-                            logWithStep(`🔍 Searching for "Bet" (พนัน) button...`);
-                            
-                            for (let r = 0; r < 20; r++) { // เพิ่มเป็น 20 รอบ (ประมาณ 10 วินาที)
-                                 const btn = page.locator('button, div, span').filter({ hasText: /^พนัน/ }).first();
-                                 if (await btn.isVisible()) {
-                                     const isDisabled = await btn.getAttribute('disabled');
-                                     if (isDisabled === null) {
-                                         betBtn = btn;
-                                         break;
-                                     }
-                                 }
-                                 await page.waitForTimeout(500);
-                             }
-
-                            if (betBtn) {
-                                logWithStep(`🚀 Clicking "Bet" (พนัน) button...`);
-                                if (this.stopTestRequested) throw new Error("Test Stopped by user");
-                                await betBtn.click({ force: true }).catch(async () => {
-                                    await betBtn.evaluate((el: HTMLElement) => el.click());
-                                });
-                                
-                                logWithStep(`⏳ Waiting for bet confirmation (Success Screen)...`);
-                                await page.waitForTimeout(5000); 
-                                logWithStep(`✅ Betting process completed!`);
-
-                                // Save successful real bet to db
-                                if (!isTest) {
-                                    await prisma.realBetLog.create({
-                                      data: {
-                                        signalId: taskId,
-                                        matchName,
-                                        leagueName,
-                                        betSide,
-                                        oddsAtBet: finalOdds,
-                                        amount: amount,
-                                        status: 'Executed'
-                                      }
-                                    }).catch((err: any) => this.smartLog(`[REAL-BET-LOG] Error: ${err.message}`));
-                                    if (taskId) {
-                                        await prisma.bet.update({
-                                            where: { signalId: taskId },
-                                            data: { autoBetStatus: 'Executed', oddsAtBet: finalOdds }
-                                        }).catch((err: any) => this.smartLog(`[REAL-BET-LOG] Failed update Bet: ${err.message}`));
-                                    }
-                                }
-
-                                // --- ขั้นตอน Cleanup (ปิดหน้าต่างที่เบลอๆ) ---
-                                logWithStep(`🧹 Cleaning up: Closing success dialog...`);
-                                await page.evaluate(() => {
-                                    const masks = document.querySelectorAll('.ui-mask, .ui-overlay, ._mask_, .van-overlay');
-                                    masks.forEach((el: any) => { el.click(); setTimeout(() => el.remove(), 500); });
-                                    const event = new MouseEvent('click', { view: window, bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
-                                    document.body.dispatchEvent(event);
-                                }).catch(() => {});
-                                await page.waitForTimeout(1500);
-                            } else {
-                                await cartIcon.evaluate((el: HTMLElement) => el.click()).catch(() => {});
-                                throw new Error(`Bet button (พนัน) not found.`);
-                            }
-                        } else {
-                            throw new Error(`Amount input field not found after waiting.`);
-                        }
-
-                        // 6. ทำความสะอาดและกลับหน้าหลัก
-                        await this.cleanupAndGoBack(page);
-
-                    } else {
-                        throw new Error(`Price not found.`);
-                    }
-                } else {
-                    throw new Error(`Section "${sectionTitle}" not found.`);
-                }
-            } catch (e: any) {
-                throw e;
-            }
-        } else {
-            // พยายามล้างช่องค้นหาเพื่อเริ่มใหม่
-            const clearBtn = page.locator('.ui-input__clear').first();
-            if (await clearBtn.isVisible()) await clearBtn.click({ force: true }).catch(() => {});
-            throw new Error(`Navigation failed. Still on Search Page.`);
-        }
+      if (isOver) {
+        columnIndex = 1; rowIndex = 0;
+      } else if (isUnder) {
+        columnIndex = 1; rowIndex = 1;
+      } else if (hasUnderdogText || hasAwayName) {
+        columnIndex = 0; rowIndex = 1;
       } else {
-        throw new Error(`Could not find match row in search results for "${homeKey}" vs "${awayKey}" after 5s.`);
+        columnIndex = 0; rowIndex = 0;
       }
+
+      logWithStep(`FINAL DECISION -> Col:${columnIndex}, Row:${rowIndex}`);
+
+      const blocks = await matchRow.locator('._main_15ywe_157').all();
+      logWithStep(`Found ${blocks.length} data blocks in match row.`);
+
+      if (blocks.length < 2) {
+        throw new Error(`Match row structure unexpected (Blocks < 2).`);
+      }
+
+      const targetBlock = blocks[rowIndex];
+      const teamNameInBlock = await targetBlock.locator('._team-name_15ywe_182').innerText().catch(() => "N/A");
+      logWithStep(`Targeting Block ${rowIndex + 1}: ${teamNameInBlock}`);
+
+      const betBoxes = await targetBlock.locator('._bet-box_1ckm8_45').all();
+      logWithStep(`Found ${betBoxes.length} bet boxes in this block.`);
+
+      if (betBoxes.length <= columnIndex) {
+        throw new Error(`Bet boxes count (${betBoxes.length}) <= columnIndex (${columnIndex}).`);
+      }
+
+      const targetBtn = betBoxes[columnIndex];
+      let oddsText = await targetBtn.locator('[class*="_odds_"], [class*="odds"]').innerText().catch(() => "N/A");
+      if (oddsText === "N/A" || oddsText.trim() === "" || isNaN(parseFloat(oddsText.replace(/[^0-9.]/g, '')))) {
+          const allElements = await targetBtn.locator('span, div, p').all();
+          for (const el of allElements) {
+              const text = await el.innerText().catch(() => "");
+              const num = parseFloat(text.replace(/[^0-9.]/g, ''));
+              if (!isNaN(num) && num >= 1.01 && num <= 20.0) {
+                  oddsText = text;
+                  break;
+              }
+          }
+      }
+      const labelText = await targetBtn.locator('._bet-label_1ckm8_65').innerText().catch(() => "N/A");
+
+      // Line Verification
+      const tLine = targetLine || "";
+      if (tLine && labelText !== "N/A") {
+        const cleanTarget = tLine.replace(/[\[\]]/g, '').trim();
+        logWithStep(`Verifying line: Target ${cleanTarget} vs Web ${labelText}`);
+
+        if (!this.isLineMatch(cleanTarget, labelText)) {
+          throw new Error(`Line mismatch: Requested ${cleanTarget} but found ${labelText}`);
+        }
+        logWithStep(`Line verified!`);
+      }
+
+      logWithStep(` - Final Action: Clicking "${labelText}" with Odds "${oddsText}"...`);
+      await targetBtn.scrollIntoViewIfNeeded().catch(() => { });
+      
+      await this.waitStep("Ready to Click Odds Box");
+      if (this.stopTestRequested) throw new Error("Test Stopped by user");
+
+      await targetBtn.click({ force: true });
+      await page.waitForTimeout(1000);
+      logWithStep(`✅ Success! "${betSide}" (${oddsText}) added to cart.`);
+
+      await this.waitStep("Odds added to cart successfully");
+      if (this.stopTestRequested) throw new Error("Test Stopped by user");
+
+      // 4. Open cart slip and verify
+      logWithStep(`🛒 Opening cart slip...`);
+      const cartIcon = page.locator('[class*="sport-bet-cart-classname"], [class*="_bet-cart_"], i[data-src*="icon_ty_floatbtn.svg"]').first();
+      await cartIcon.click({ force: true }).catch(() => cartIcon.evaluate((el: any) => el.click()));
+      await page.waitForTimeout(1500);
+
+      const slipInput = page.locator('input.ui-input__input, [class*="_input-box_"] input, .van-field__control').first();
+      if (await slipInput.isVisible({ timeout: 5000 })) {
+          logWithStep(`🔢 Entering amount: ${amount}`);
+          await slipInput.click({ force: true }).catch(() => {});
+          
+          await this.waitStep("Ready to Type Bet Amount");
+          if (this.stopTestRequested) throw new Error("Test Stopped by user");
+
+          await page.keyboard.type(amount.toString(), { delay: 100 });
+          await page.waitForTimeout(1000);
+
+          await this.waitStep("Bet Amount Entered successfully");
+          if (this.stopTestRequested) throw new Error("Test Stopped by user");
+
+          // 5. Simulate Success (Typing amount is considered success)
+          const typedValue = await slipInput.inputValue().catch(() => "");
+          if (typedValue.includes(amount.toString()) || typedValue !== "") {
+              logWithStep(`✅ Simulation Success! Typed amount correctly.`);
+
+              // บันทึกข้อมูลลง DB ว่าแทงผ่านแล้ว (เพื่อให้โชว์ในช่อง รอลุ้น)
+              if (!isTest) {
+                  await prisma.realBetLog.create({
+                      data: { signalId: taskId, matchName, leagueName, betSide, amount, status: 'Success' }
+                  }).catch((err) => this.smartLog(`[DB-ERROR] RealBetLog: ${err.message}`));
+              }
+              
+              if (taskId && taskId !== 'dummy-task-id-123') {
+                  await prisma.bet.updateMany({
+                      where: { signalId: taskId },
+                      data: { autoBetStatus: 'Success' } 
+                  }).catch((err) => this.smartLog(`[DB-ERROR] BetUpdate: ${err.message}`));
+              }
+
+              // กดปุ่มถังขยะ (Trash Can)
+              logWithStep(`🗑️ Clicking Trash Can icon to remove bet slip...`);
+              const trashBtn = page.locator('[class*="delete"], [class*="trash"], [xlink\\:href*="delete"], [xlink\\:href*="trash"]').first();
+              if (await trashBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+                  await trashBtn.click({ force: true }).catch(() => {});
+              } else {
+                  // Fallback ค้นหา svg รูปถังขยะ
+                  await page.evaluate(() => {
+                     const svgs = document.querySelectorAll('svg, i');
+                     for (let i = 0; i < svgs.length; i++) {
+                         if (svgs[i].outerHTML.includes('delete') || svgs[i].outerHTML.includes('trash')) {
+                             const btn = svgs[i].closest('div') || svgs[i].closest('span') || svgs[i];
+                             (btn as HTMLElement).click();
+                             break;
+                         }
+                     }
+                  }).catch(() => {});
+              }
+              await page.waitForTimeout(1500);
+
+              // กดยืนยันเพื่อปิด Dialog ยืนยันการลบ (ถ้ามี Popup ถามว่า "แน่ใจหรือไม่ที่จะลบ")
+              const confirmDelete = page.locator('button, div').filter({ hasText: /ตกลง|ยืนยัน|Confirm|OK/i }).first();
+              if (await confirmDelete.isVisible({ timeout: 1000 }).catch(() => false)) {
+                  logWithStep(`🔘 Clicking Confirm Delete button...`);
+                  await confirmDelete.click({ force: true }).catch(() => {});
+                  await page.waitForTimeout(1000);
+              }
+              
+          } else {
+              throw new Error(`Amount input field is empty or incorrect after typing.`);
+          }
+      } else {
+          throw new Error(`Amount input field not found after waiting.`);
+      }
+
+      await this.cleanupAndGoBack(page).catch(() => {});
 
     } catch (error: any) {
       logWithStep(`[AUTO-BOT] ❌ Process Error: ${error.message}`);
@@ -647,13 +502,13 @@ export class BrowserService {
               status: 'Failed',
               errorMessage: error.message
             }
-          }).catch((err: any) => this.smartLog(`[REAL-BET-LOG] Failed write error: ${err.message}`));
+          }).catch((err) => this.smartLog(`[REAL-BET-LOG] Failed write error: ${err.message}`));
 
           if (taskId) {
               await prisma.bet.update({
                   where: { signalId: taskId },
                   data: { autoBetStatus: 'Failed', autoBetError: error.message }
-              }).catch((err: any) => this.smartLog(`[REAL-BET-LOG] Failed update Bet error: ${err.message}`));
+              }).catch((err) => this.smartLog(`[REAL-BET-LOG] Failed update Bet error: ${err.message}`));
           }
       }
       await this.cleanupAndGoBack(page).catch(() => {});
@@ -662,7 +517,6 @@ export class BrowserService {
     }
   }
 
-  // ฟังก์ชันช่วยย้อนกลับและปิด Popup (รองรับ Popup โบนัสและวงล้อ)
   private static async cleanupAndGoBack(page: Page) {
     this.smartLog(`🧹 Cleaning up and returning to main page...`);
     
@@ -764,6 +618,276 @@ export class BrowserService {
     this.startQueueProcessor(isTest);
   }
 
+  /**
+   * ตรวจสอบและปิด Popup โฆษณาหรือวงล้อที่ขึ้นมาบดบังหน้าบราวเซอร์
+   */
+  public static async closeAnnoyingPopups(page: Page): Promise<boolean> {
+    try {
+      const closeSelectors = [
+        '[xlink\\:href*="close"]',
+        '[xlink\\:href*="ui-close"]',
+        '[xlink\\:href*="ui-dialog-close"]',
+        '.ui-dialog-close-box__icon',
+        '.ui-dialog-close-box',
+        '._close-icon_',
+        '[class*="close-box"]',
+        '[class*="close_box"]',
+        '[class*="dialog-close"]',
+        '[class*="dialog_close"]',
+        '.van-popup__close-icon',
+        '.van-icon-cross',
+        'svg[class*="close"]',
+        'div[class*="close"]',
+        'img[src*="close"]',
+        'button[class*="close"]'
+      ];
+
+      let closedAny = false;
+      for (const sel of closeSelectors) {
+        const el = page.locator(sel).first();
+        if (await el.isVisible().catch(() => false)) {
+          console.log(`[POPUP-HANDLER] ✖️ Close popup button detected via selector "${sel}". Closing...`);
+          await el.click({ force: true }).catch(() => {});
+          closedAny = true;
+          await page.waitForTimeout(2000);
+        }
+      }
+
+      // ตรวจสอบ text X
+      const xText = page.locator('div, span, button, svg, i').filter({ hasText: /^x$/i }).first();
+      if (await xText.isVisible().catch(() => false)) {
+        console.log(`[POPUP-HANDLER] ✖️ Close popup button detected via text "X". Closing...`);
+        await xText.click({ force: true }).catch(() => {});
+        closedAny = true;
+        await page.waitForTimeout(2000);
+      }
+
+      // ตรวจสอบขนาด Overlay/Mask
+      await page.evaluate(() => {
+        const overlays = document.querySelectorAll('.ui-mask, .ui-overlay, ._mask_, .van-overlay');
+        overlays.forEach((el: any) => {
+          const rect = el.getBoundingClientRect();
+          if (rect.height > window.innerHeight * 0.7) {
+            el.click(); // ลองคลิกปิด
+            setTimeout(() => el.remove(), 200); // ลบออก
+          }
+        });
+      }).catch(() => {});
+
+      return closedAny;
+    } catch (e: any) {
+      console.log(`[POPUP-HANDLER] ⚠️ Error during closing popups: ${e.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * ดึงยอดเงินคงเหลือล่าสุดจากเว็บจริงแบบสดๆ
+   */
+  public static async getActualBalance(): Promise<number | null> {
+    const page = this.page;
+    if (!page) {
+      console.log(`[BALANCE-SYNC] ⚠️ No active page instance found yet.`);
+      return this.lastBalance;
+    }
+
+    // ถ้ายอดเงินล่าสุดเคยอัปเดตไปไม่ถึง 10 วินาทีที่แล้ว ให้ดึงจาก Cache ทันที เพื่อประหยัด CPU และกัน Log รก
+    const now = Date.now();
+    if (this.lastBalance !== null && (now - this.lastBalanceTime) < 10000) {
+      return this.lastBalance;
+    }
+
+    try {
+      // ปิด Popup กวนใจก่อนสแกนยอดเงิน
+      await this.closeAnnoyingPopups(page).catch(() => {});
+
+      // 1. ลองดึงจาก Selector ทั่วไป (เพิ่มคลาสเฉพาะเจาะจงของเว็บบาลานซ์ด้านซ้ายบน)
+      const selectors = [
+        '.global-currency-info-index',
+        '.currency-count',
+        '.currency-info-custom',
+        '.lobby-base-header__balance',
+        '[class*="balance"]',
+        '[class*="credit"]',
+        '[class*="money"]',
+        '.user-balance',
+        '.balance-amount'
+      ];
+      
+      const frames = page.frames();
+
+      // ลองดึงจาก Main page และ IFrames ผ่าน selectors
+      for (const frame of frames) {
+        for (const sel of selectors) {
+          const el = frame.locator(sel).first();
+          if (await el.isVisible().catch(() => false)) {
+            const text = await el.innerText().catch(() => "");
+            const num = parseFloat(text.replace(/[^0-9.]/g, ''));
+            if (!isNaN(num) && num > 0) {
+              console.log(`[BALANCE-SYNC] 💰 Found balance via selector "${sel}" in frame: ${num}`);
+              this.lastBalance = num;
+              this.lastBalanceTime = Date.now();
+              return num;
+            }
+          }
+        }
+      }
+
+      // 2. ดึงผ่าน Text TreeWalker ในทุกเฟรม (ค้นหาตัวเลขทศนิยมเดี่ยวๆ ใน Header)
+      for (const frame of frames) {
+        const num = await frame.evaluate(() => {
+          const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          let node;
+          const candidates = [];
+          while (node = walk.nextNode()) {
+            const txt = node.textContent?.trim() || "";
+            // ล้างอักขระพิเศษเพื่อตรวจสอบเฉพาะทศนิยม (รองรับ สัญลักษณ์เงิน และธงชาติ)
+            const cleaned = txt.replace(/[^0-9.]/g, '').trim();
+            const parts = cleaned.split('.');
+            if (parts.length === 2 && parts[1].length === 2) {
+              const val = parseFloat(cleaned);
+              if (val > 0 && val < 1000000) {
+                const parent = node.parentElement;
+                if (parent) {
+                  const rect = parent.getBoundingClientRect();
+                  
+                  // ค้นหาและตรวจสอบว่า text นี้อยู่ใน Popup/Dialog/Wheel/Bonus/Activity หรือไม่
+                  let isInsidePopup = false;
+                  let curr: HTMLElement | null = parent;
+                  while (curr) {
+                    const cls = (curr.className || "").toString().toLowerCase();
+                    const id = (curr.id || "").toString().toLowerCase();
+                    if (
+                      cls.includes('popup') || cls.includes('dialog') || cls.includes('modal') || 
+                      cls.includes('overlay') || cls.includes('mask') || cls.includes('wheel') || 
+                      cls.includes('spin') || cls.includes('bonus') || cls.includes('task') ||
+                      cls.includes('lucky') || cls.includes('gift') || cls.includes('activity') ||
+                      cls.includes('award') || cls.includes('commission') || cls.includes('invite') ||
+                      id.includes('popup') || id.includes('dialog') || id.includes('modal') ||
+                      id.includes('overlay') || id.includes('mask') || id.includes('wheel') || 
+                      id.includes('spin') || id.includes('bonus') || id.includes('task') ||
+                      id.includes('lucky') || id.includes('gift') || id.includes('activity') ||
+                      id.includes('award') || id.includes('commission') || id.includes('invite')
+                    ) {
+                      isInsidePopup = true;
+                      break;
+                    }
+                    curr = curr.parentElement;
+                  }
+                  
+                  // กรองให้มั่นใจว่ามองเห็นได้จริง และอยู่ในบริเวณส่วนบนของหน้าจอ (Header/Profile) และไม่อยู่ใน Popup
+                  if (!isInsidePopup && rect.width > 0 && rect.height > 0 && rect.top < 400) {
+                    candidates.push({ val, top: rect.top });
+                  }
+                }
+              }
+            }
+          }
+          candidates.sort((a, b) => a.top - b.top);
+          return candidates.length > 0 ? candidates[0].val : null;
+        }).catch(() => null);
+
+        if (num !== null && !isNaN(num) && num > 0) {
+          console.log(`[BALANCE-SYNC] 💰 Found balance via dynamic text scan in frame: ${num}`);
+          this.lastBalance = num;
+          this.lastBalanceTime = Date.now();
+          return num;
+        }
+      }
+
+      console.log(`[BALANCE-SYNC] ℹ️ Scanning page text, nothing found yet. Last balance: ${this.lastBalance}`);
+      return this.lastBalance;
+    } catch (e: any) {
+      console.log(`[BALANCE-SYNC] ❌ Error scraping balance: ${e.message}`);
+      return this.lastBalance;
+    }
+  }
+
+  public static getCachedBalance(): number | null {
+    return this.lastBalance;
+  }
+
+  /**
+   * สแกนหน้าบราวเซอร์จริงเพื่อค้นหาและแยกผลสกอร์สดปัจจุบันของคู่นั้นๆ
+   */
+  public static async extractLiveScore(page: any, homeKey: string, awayKey: string): Promise<{ scoreHome: number; scoreAway: number } | null> {
+    try {
+      // วิธีการที่ 1: ค้นหาข้อความแบบยึดแพทเทิร์นทศนิยม/สกอร์ (เช่น "0 - 0", "1:2") ใน Header
+      const scoreElements = page.locator('div, span, p');
+      const count = await scoreElements.count().catch(() => 0);
+      
+      for (let i = 0; i < count; i++) {
+        const el = scoreElements.nth(i);
+        const isVisible = await el.isVisible().catch(() => false);
+        if (!isVisible) continue;
+        
+        const text = await el.innerText().catch(() => "");
+        // มองหารูปแบบที่เหมือนสกอร์: เช่น "0 - 0", "1:2", "3 - 1"
+        const scorePattern = /^\s*(\d{1,2})\s*[-:]\s*(\d{1,2})\s*$/;
+        const match = text.match(scorePattern);
+        if (match) {
+          // ตรวจสอบตำแหน่งความน่าจะเป็น (เช่น อยู่แถวบน)
+          const box = await el.boundingBox().catch(() => null);
+          if (box && box.y < 350) { // ส่วนใหญ่ Header สกอร์จะอยู่บนสุดของจอภาพมือถือ
+            const scoreHome = parseInt(match[1], 10);
+            const scoreAway = parseInt(match[2], 10);
+            this.smartLog(`[LIVE-SCORE] Found score via format pattern: ${scoreHome}-${scoreAway}`);
+            return { scoreHome, scoreAway };
+          }
+        }
+      }
+
+      // วิธีการที่ 2: ค้นหา Node ที่มีชื่อทีมและหาตัวเลขใกล้เคียง
+      // ค้นหาตำแหน่งของชื่อทีมเหย้า
+      const homeTeamEl = page.locator('div, span').filter({ hasText: homeKey }).first();
+      const awayTeamEl = page.locator('div, span').filter({ hasText: awayKey }).first();
+
+      if (await homeTeamEl.isVisible() && await awayTeamEl.isVisible()) {
+        // มองหาองค์ประกอบที่มีตัวเลขเดี่ยวๆ ใน Container เดียวกันหรือ Sibling
+        // ดึงข้อความทั้งหมดของ Container แถบข้อมูลด้านบน
+        const headerText = await page.evaluate(() => {
+          const header = document.querySelector('.lobby-base-header, header, [class*="header"]');
+          return header ? (header as HTMLElement).innerText : document.body.innerText;
+        }).catch(() => "");
+
+        // มองหารูปแบบสกอร์ในข้อความ Header เช่น "ทีม A 0 - 0 ทีม B" หรือมีตัวเลขเดี่ยวปะปน
+        const scoreMatches = headerText.match(/(\d{1,2})\s*[-:]\s*(\d{1,2})/);
+        if (scoreMatches) {
+          const scoreHome = parseInt(scoreMatches[1], 10);
+          const scoreAway = parseInt(scoreMatches[2], 10);
+          this.smartLog(`[LIVE-SCORE] Found score via Header match: ${scoreHome}-${scoreAway}`);
+          return { scoreHome, scoreAway };
+        }
+        
+        // ค้นหาใน Parent หรือ Sibling ของชื่อทีม
+        const homeScore = await page.evaluate((el: any) => {
+          const parent = el.parentElement;
+          if (!parent) return null;
+          // หา child ที่เป็นตัวเลขเดี่ยว
+          const numbers = Array.from(parent.querySelectorAll('div, span')).map((e: any) => e.innerText.trim()).filter((t: string) => /^\d+$/.test(t));
+          return numbers.length > 0 ? parseInt(numbers[0], 10) : null;
+        }, await homeTeamEl.elementHandle()).catch(() => null);
+
+        const awayScore = await page.evaluate((el: any) => {
+          const parent = el.parentElement;
+          if (!parent) return null;
+          const numbers = Array.from(parent.querySelectorAll('div, span')).map((e: any) => e.innerText.trim()).filter((t: string) => /^\d+$/.test(t));
+          return numbers.length > 0 ? parseInt(numbers[0], 10) : null;
+        }, await awayTeamEl.elementHandle()).catch(() => null);
+
+        if (homeScore !== null && awayScore !== null) {
+          this.smartLog(`[LIVE-SCORE] Found score via relative siblings: ${homeScore}-${awayScore}`);
+          return { scoreHome: homeScore, scoreAway: awayScore };
+        }
+      }
+
+      return null;
+    } catch (e: any) {
+      this.smartLog(`[LIVE-SCORE] Error parsing score: ${e.message}`);
+      return null;
+    }
+  }
+
   private static async executeFullBetFlow(page: any, task: any) {
     const { leagueName, matchName, betSide, amount, targetLine, taskId } = task;
 
@@ -807,86 +931,46 @@ export class BrowserService {
       const awayKey = getUniqueKey(awayTeam);
       const betSideClean = cleanName(betSide);
 
-      // 1. ไถหา "ตู้คอนเทนเนอร์ของลีก" (ui-collapse-item)
-      this.smartLog(`[AUTO-BET] Step 1: Scanning for League: ${leagueName} `);
-      let foundLeague = false;
-      let leagueContainer: any = null;
+      // 1. ALWAYS go straight to the Search page directly
+      this.smartLog(`[AUTO-BET] Step 1: Going straight to Search page to find League: "${leagueName}"`);
+      await this.useSearchFallback(page, leagueName);
 
-      for (let i = 0; i < 20; i++) {
-        // หา Element ที่ครอบทั้งลีก (ui-collapse-item ที่มีชื่อลีก)
-        leagueContainer = page.locator('.ui-collapse-item').filter({ has: page.locator('.ui-cell__title').filter({ hasText: leagueName.substring(0, 15) }) }).first();
-
-        if (await leagueContainer.isVisible()) {
-          const header = leagueContainer.locator('.ui-cell--clickable').first();
-          const isExpanded = await header.getAttribute('aria-expanded');
-
-          this.smartLog(`[AUTO-BET] Found League Container! (Status: ${isExpanded === 'true' ? 'Expanded' : 'Collapsed'})`);
-
-          if (isExpanded === 'false') {
-            this.smartLog(`[AUTO-BET] Expanding League...`);
-            const rightIcon = header.locator('.ui-cell__right-icon').first();
-            await rightIcon.click({ force: true }).catch(() => header.click({ force: true }));
-            await page.waitForTimeout(2000);
-          }
-          foundLeague = true;
-          break;
-        }
-        await page.mouse.wheel(0, 500);
-        await page.waitForTimeout(800);
-      }
-
-      if (!foundLeague) {
-        this.smartLog(`[AUTO-BET] ⚠️ League not found. Using Search Fallback...`);
-        await this.useSearchFallback(page, homeKey);
-        // หลัง Search ลีกจะกางอัตโนมัติ ให้กำหนด Container ใหม่จากผลการค้นหา
-        leagueContainer = page.locator('.ui-collapse-item').first();
-      }
-
-      // 2. ไถหา "คู่บอล" เฉพาะภายในลีกที่เลือกเท่านั้น (League Scoping)
+      // 2. ไถหา "คู่บอล" จากผลการค้นหา
       this.smartLog(`[AUTO-BET] Step 2: Scanning for Match Row inside ${leagueName}...`);
       let foundMatch = false;
       let matchRow: any = null;
 
       for (let i = 0; i < 10; i++) {
-        // ค้นหาแถวคู่บอล โดยระบุว่าต้องอยู่ภายใต้ leagueContainer เท่านั้น!
-        matchRow = leagueContainer.locator('.match-item, .match-row, .game-item, [class*="match-item"], [class*="game-item"]')
-          .filter({ hasText: homeKey })
-          .filter({ hasText: awayKey })
-          .first();
+        // ค้นหาแถวคู่บอล ในหน้าผลลัพธ์การค้นหา
+        const candidateRows = await page.locator('.match-item, .match-row, .game-item, [class*="match-item"], [class*="game-item"]').all();
+        for (const row of candidateRows) {
+          const teamNameElements = await row.locator('._team-name_15ywe_182, [class*="team-name"]').all();
+          if (teamNameElements.length >= 2) {
+            const webHome = await teamNameElements[0].innerText().catch(() => "");
+            const webAway = await teamNameElements[1].innerText().catch(() => "");
+            
+            if (this.matchTeam(homeTeam, webHome) && this.matchTeam(awayTeam, webAway)) {
+              matchRow = row;
+              foundMatch = true;
+              break;
+            }
+          }
+        }
 
-        if (await matchRow.isVisible()) {
-          this.smartLog(`[AUTO-BET] Success! Match Found within scoped league.`);
+        if (foundMatch && matchRow) {
+          this.smartLog(`[AUTO-BET] Success! Match Found within search results.`);
           await matchRow.scrollIntoViewIfNeeded().catch(() => { });
           await page.waitForTimeout(500);
-          foundMatch = true;
           break;
         }
 
-        // ถ้าเป็นลีกใหญ่ที่มีหลายคู่ อาจต้องไถภายในตัวมันเอง
+        // ไถหน้าจอหา
         await page.mouse.wheel(0, 400);
         await page.waitForTimeout(800);
       }
 
-      // แผนสำรองสุดท้าย: ถ้ายังไม่เจอให้ลองใช้ช่องค้นหา
-      if (!foundMatch) {
-        this.smartLog(`[AUTO-BET] ⚠️ Match not found after expanding. Using Search Fallback...`);
-        await this.useSearchFallback(page, homeKey);
-
-        // ลองหาอีกครั้งหลังค้นหา
-        const matchRowSearch = page.locator('.match-item, .match-row, .game-item, [class*="match-item"], [class*="game-item"]')
-          .filter({ hasText: homeKey })
-          .filter({ hasText: awayKey })
-          .first();
-
-        if (await matchRowSearch.isVisible()) {
-          this.smartLog(`[AUTO-BET] Success! Match Row Found after Search.`);
-          foundMatch = true;
-          matchRow = matchRowSearch;
-        }
-      }
-
-      if (!foundMatch) {
-        this.smartLog(`[AUTO-BET] ❌ ERROR: Could not find match row for ${homeKey} vs ${awayKey}`);
+      if (!foundMatch || !matchRow) {
+        this.smartLog(`[AUTO-BET] ❌ ERROR: Could not find match row for ${homeTeam} vs ${awayTeam}`);
         return;
       }
 
@@ -1065,77 +1149,145 @@ export class BrowserService {
   }
 
   // ฟังก์ชันช่วยสำหรับการค้นหา
+  private static async clickSearchButton(page: any): Promise<boolean> {
+    try {
+      const searchIcon = page.locator('i[data-src*="icon_ty_ss.svg"], [data-src*="icon_ty_ss.svg"]').first();
+      
+      // Attempt 1: JS Click on the exact i tag (most reliable for hybrid touch apps)
+      const clickedJS = await searchIcon.evaluate((el: HTMLElement) => {
+        el.click();
+        const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+        el.dispatchEvent(clickEvent);
+        return true;
+      }).catch(() => false);
+      
+      if (clickedJS) {
+        this.smartLog(`[AUTO-BOT] Clicked search icon via JS Event dispatch.`);
+        return true;
+      }
+      
+      // Attempt 2: Standard Playwright Click
+      await searchIcon.click({ force: true, timeout: 2000 });
+      this.smartLog(`[AUTO-BOT] Clicked search icon via Playwright click.`);
+      return true;
+    } catch (e: any) {
+      // Attempt 3: General DOM selector click
+      this.smartLog(`[AUTO-BOT] Standard search click failed: ${e.message}. Trying generic DOM scanner...`);
+      const clickedDOM = await page.evaluate(() => {
+        const allIcons = Array.from(document.querySelectorAll('i, svg, img, div'));
+        const searchIcon = allIcons.find(el => {
+          const src = el.getAttribute('data-src') || el.getAttribute('src') || '';
+          return src.includes('icon_ty_ss.svg');
+        });
+        if (searchIcon) {
+          (searchIcon as HTMLElement).click();
+          const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+          searchIcon.dispatchEvent(clickEvent);
+          return true;
+        }
+        return false;
+      }).catch(() => false);
+      
+      return clickedDOM;
+    }
+  }
+
   private static async useSearchFallback(page: any, key: string) {
-    await page.click('.icon-search, .search-icon, .fa-search').catch(() => { });
-    await page.waitForTimeout(600);
-    const searchInput = page.locator('input[placeholder*="ค้นหา"], .search-input').first();
-    await searchInput.fill(key).catch(() => { });
-    await page.keyboard.press('Enter');
+    this.smartLog(`[AUTO-BOT] 🔍 Triggering Search Fallback for: "${key}"`);
+    
+    this.smartLog(`[AUTO-BOT] ⚡ Clicking Search Icon via Multi-Method JS engine...`);
+    await this.clickSearchButton(page);
     await page.waitForTimeout(2000);
+    
+    // Check if we successfully opened the Search events page
+    const searchInput = page.locator('input[placeholder*="ค้นหา"], input[placeholder*="กรุณากรอก"], input.van-field__control, .search-input input').first();
+    const isSearchOpen = await searchInput.isVisible().catch(() => false);
+    
+    if (isSearchOpen) {
+      this.smartLog(`[AUTO-BOT] ✅ Clicked Search Icon successfully! Now on "การค้นหาเหตุการณ์" page.`);
+    } else {
+      this.smartLog(`[AUTO-BOT] ❌ Failed to click/open Search page! Icon not triggered.`);
+    }
+    
+    // ⏸️ Pause 1: Verify search icon click and search page opened
+    await this.waitStep("Verify Search Button Clicked & Page Opened");
+    if (this.stopTestRequested) throw new Error("Test Stopped by user");
+    
+    this.smartLog(`[AUTO-BOT] ✍️ Entering search key: "${key}"`);
+    await searchInput.click({ force: true }).catch(() => {});
+    await page.waitForTimeout(500);
+    await searchInput.fill('').catch(() => {}); // Clear old values
+    await searchInput.fill(key);
+    await page.waitForTimeout(1000);
+    
+    // ⏸️ Pause 2: Verify league search input filled before submitting search
+    await this.waitStep("Verify Search Key Entered");
+    if (this.stopTestRequested) throw new Error("Test Stopped by user");
+    
+    this.smartLog(`[AUTO-BOT] 🚀 Submitting Search Query...`);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(3000); // Wait for results to load
   }
 
   private static async performSearch(page: any, leagueName: string) {
     this.smartLog(`[AUTO-BET] Opening search tool...`);
 
-    // 1. คลิกปุ่มค้นหา (แว่นขยาย) - พยายามหาจาก data-src เป็นหลักเพราะแน่นอนกว่า Class
-    try {
-        const iconFound = await page.evaluate(() => {
-            const allIcons = Array.from(document.querySelectorAll('i, svg, img, div'));
-            const searchIcon = allIcons.find(el => {
-                const src = el.getAttribute('data-src') || el.getAttribute('src') || '';
-                return src.includes('icon_ty_ss.svg') || (el.classList.contains('icon-search') || el.classList.contains('search-icon'));
-            });
+    // 0. ตรวจสอบก่อนว่าช่องกรอกค้นหาเปิดอยู่แล้วหรือไม่ ถ้าเปิดอยู่แล้วไม่ต้องคลิกแว่นขยายซ้ำ (เพื่อไม่ให้เป็นการปิดช่องค้นหา)
+    const inputSelectors = [
+      'input.ui-input__input[type="text"]',
+      'input[placeholder*="ค้นหา"]',
+      'input[placeholder*="Search"]',
+      '.ui-input__input input',
+      '.search-input input',
+      'input.van-field__control'
+    ];
 
-            if (searchIcon) {
-                (searchIcon as HTMLElement).click();
-                return true;
-            }
-            return false;
-        });
-        
-        if (!iconFound) {
-            this.smartLog(` - Warning: Search icon not found via JS evaluation. Trying fallback selectors...`);
-            await page.click('.icon-search, .search-icon, .fa-search, [class*="search"]').catch(() => {});
+    let alreadyOpen = false;
+    for (const selector of inputSelectors) {
+      try {
+        if (await page.locator(selector).first().isVisible().catch(() => false)) {
+          alreadyOpen = true;
+          this.smartLog(`[AUTO-BET] Search input is already visible. Skipping search trigger click.`);
+          break;
         }
-        
-        this.smartLog(` - Search trigger attempted.`);
-    } catch (e: any) {
-        this.smartLog(` - Warning: Search trigger failed: ${e.message}`);
+      } catch (e) {}
     }
 
-    // รอให้หน้าต่างค้นหา (Modal) โผล่ขึ้นมา
-    await page.waitForTimeout(4000); // เพิ่มเวลารอ Modal
+    if (!alreadyOpen) {
+      await this.clickSearchButton(page);
+      await page.waitForTimeout(2000); 
+    }
 
-    // 2. รอและกรอกชื่อลีก
+    // 2. รอและกรอกชื่อลีก (มีระบบ Retry 10 รอบ ทุกๆ 500ms ป้องกันอนิเมชั่นช้า)
     try {
-      const inputSelectors = [
-        'input.ui-input__input[type="text"]',
-        'input[placeholder*="ค้นหา"]',
-        'input[placeholder*="Search"]',
-        '.ui-input__input input',
-        '.search-input input',
-        'input.van-field__control'
-      ];
-      
       let inputFound = false;
-      for (const selector of inputSelectors) {
+      let activeInput: any = null;
+
+      for (let retry = 0; retry < 10; retry++) {
+        for (const selector of inputSelectors) {
           try {
-              const input = page.locator(selector).first();
-              if (await input.isVisible({ timeout: 3000 })) {
-                  this.smartLog(`[AUTO-BET] Found search input via: ${selector}`);
-                  await input.fill(''); // ล้างค่าเก่า
-                  await input.fill(leagueName);
-                  inputFound = true;
-                  break;
-              }
+            const input = page.locator(selector).first();
+            if (await input.isVisible().catch(() => false)) {
+              activeInput = input;
+              inputFound = true;
+              this.smartLog(`[AUTO-BET] Found search input via: ${selector} (on retry ${retry + 1})`);
+              break;
+            }
           } catch (e) {}
+        }
+        if (inputFound) break;
+        await page.waitForTimeout(500);
       }
 
-      if (!inputFound) {
+      if (!inputFound || !activeInput) {
           throw new Error("Could not find search input field after multiple attempts");
       }
       
       this.smartLog(`[AUTO-BET] Entering league name: ${leagueName}`);
+      await activeInput.click({ force: true }).catch(() => {});
+      await page.waitForTimeout(500);
+      await activeInput.fill('').catch(() => {}); // ล้างค่าเก่า
+      await activeInput.fill(leagueName);
       await page.waitForTimeout(800);
 
       // 3. กดปุ่มยืนยันการค้นหา
@@ -1145,7 +1297,7 @@ export class BrowserService {
         await page.keyboard.press('Enter');
       });
 
-      // **จุดสำคัญ**: รอให้หน้าผลลัพธ์การค้นหาโหลดขึ้นมาจริงๆ (หา Element ที่เป็นผลลัพธ์)
+      // **จุดสำคัญ**: รอให้หน้าผลลัพธ์การค้นหาโหลดขึ้นมาจริงๆ
       this.smartLog(`[AUTO-BET] Waiting for search results to load...`);
       await page.waitForTimeout(3000); // ให้เวลาหน้าจอเปลี่ยน
       

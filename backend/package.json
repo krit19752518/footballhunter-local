@@ -8,7 +8,9 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "jest",
-    "kill": "npx kill-port 3000"
+    "kill": "npx kill-port 3000",
+    "log:test": "powershell -Command \"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Content -Path ../testbot.log -Wait -Tail 30 -Encoding utf8\"",
+    "log:real": "powershell -Command \"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Content -Path ../bot.log -Wait -Tail 30 -Encoding utf8\""
   },
   "keywords": [],
   "author": "",
