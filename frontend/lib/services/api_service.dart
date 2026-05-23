@@ -1,9 +1,18 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 import '../models/football_models.dart';
 
 class ApiService {
-  static const String baseUrl = 'http://localhost:3000';
+  static String get baseUrl {
+    if (kIsWeb) {
+      final host = Uri.base.host;
+      if (host.isNotEmpty) {
+        return 'http://$host:3000';
+      }
+    }
+    return 'http://localhost:3000';
+  }
 
   static Future<List<FootballMatch>> getMatches() async {
     final response = await http.get(Uri.parse('$baseUrl/matches'));

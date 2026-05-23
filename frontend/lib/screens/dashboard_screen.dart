@@ -37,8 +37,23 @@ class DashboardScreen extends StatelessWidget {
               child: const Text('Test Auto-bot', style: TextStyle(fontWeight: FontWeight.bold)),
             ),
           ),
+          if (provider.isTestRunning)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+              child: ElevatedButton.icon(
+                onPressed: () => provider.nextStep(),
+                icon: const Icon(Icons.fast_forward, color: Colors.white),
+                label: const Text('NEXT STEP', style: TextStyle(fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  elevation: 5,
+                  shadowColor: Colors.greenAccent,
+                ),
+              ),
+            ),
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 10),
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
             child: ElevatedButton.icon(
               onPressed: () => provider.toggleBrowserReady(),
               icon: Icon(

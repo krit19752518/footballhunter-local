@@ -16,24 +16,30 @@ dotenv.config();
 
 // ระบบ Logging หลัก (Live)
 const logFile = path.join(__dirname, '../bot.log');
-const logStream = fs.createWriteStream(logFile, { flags: 'a' });
 
 // ระบบ Logging แยกสำหรับ Test
 const testLogFile = path.join(__dirname, '../testbot.log');
-const testLogStream = fs.createWriteStream(testLogFile, { flags: 'a' });
 
 export const log = (message: string) => {
   const timestamp = new Date().toLocaleString();
   const formattedMessage = `[${timestamp}] ${message}`;
   console.log(formattedMessage);
-  logStream.write(formattedMessage + '\n');
+  try {
+    fs.appendFileSync(logFile, formattedMessage + '\n', 'utf8');
+  } catch (e) {
+    console.error('Failed to write to bot.log:', e);
+  }
 };
 
 export const testLog = (message: string) => {
   const timestamp = new Date().toLocaleString();
   const formattedMessage = `[${timestamp}] ${message}`;
   console.log(formattedMessage);
-  testLogStream.write(formattedMessage + '\n');
+  try {
+    fs.appendFileSync(testLogFile, formattedMessage + '\n', 'utf8');
+  } catch (e) {
+    console.error('Failed to write to testbot.log:', e);
+  }
 };
 
 export const app = express();
@@ -53,7 +59,8 @@ app.get('/matches', async (req, res) => {
     });
     res.json(matches);
   } catch (error) {
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error('Error in GET /matches:', error);
+    res.status(500).json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -69,7 +76,8 @@ app.get('/signals', async (req, res) => {
     });
     res.json(signals);
   } catch (error) {
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error('Error in GET /signals:', error);
+    res.status(500).json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -82,7 +90,8 @@ app.get('/bets', async (req, res) => {
     });
     res.json(bets);
   } catch (error) {
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error('Error in GET /bets:', error);
+    res.status(500).json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -94,7 +103,8 @@ app.get('/bets/history', async (req, res) => {
     });
     res.json(bets);
   } catch (error) {
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error('Error in GET /bets/history:', error);
+    res.status(500).json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -106,7 +116,8 @@ app.get('/real-bets/history', async (req, res) => {
     });
     res.json(realBets);
   } catch (error) {
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error('Error in GET /real-bets/history:', error);
+    res.status(500).json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -150,6 +161,45 @@ app.post('/browser/test-bot', async (req, res) => {
     );
 
     res.json({ success: true, message: 'Test bot triggered', data: { leagueName, matchName, betSide, amount, targetLine, isTest } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/browser/test-signal', async (req, res) => {
+  try {
+    const {
+      matchId,
+      logicType = 'แฮนดิแคป (HDP)',
+      message = '📈 ต่อไหลแรง: เซินเจิ้น เผิง ซิตี้ เอฟซี ราคาลดเหลือ 0.85 (ไหลลง 0.05)',
+      oddsAtBet = 0.85,
+      lineAtBet = '0.5',
+      betSide = 'เซินเจิ้น เผิง ซิตี้ เอฟซี',
+      oddsType = 'FT-HDP'
+    } = req.body;
+
+    log(`[TEST-SIGNAL] 🧪 Triggering test signal for matchId: ${matchId}`);
+
+    const match = await prisma.match.findUnique({
+      where: { id: parseInt(matchId) }
+    });
+
+    if (!match) {
+      return res.status(404).json({ success: false, error: 'Match not found' });
+    }
+
+    // เรียก private static method createSignalAndBet ของ SignalService ผ่าน any เพื่อหลีกเลี่ยง ts restriction
+    await (SignalService as any).createSignalAndBet(
+      match,
+      logicType,
+      message,
+      oddsAtBet,
+      lineAtBet,
+      betSide,
+      oddsType
+    );
+
+    res.json({ success: true, message: 'Test signal triggered successfully' });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

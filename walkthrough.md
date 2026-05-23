@@ -16,14 +16,6 @@
   3. การดึงยอดเงินผ่าน Selector มาตรฐานในระบบเว็บจริง
   4. การดึงยอดเงินผ่านการ Evaluate ข้อความรวมใน Header
 - **ผลลัพธ์การทดสอบ:** **ผ่าน 100% สลวยเขียวขจีทั้งหมด! (Green & Passed)**
----
-
-## 4. สรุปรายการ Bug Fixes ล่าสุด (จาก GitHub)
-1. **แก้ปัญหา 502 Bad Gateway:** เพิ่มระบบ Graceful Error Handling เวลาเรียก External API ป้องกันระบบล่ม
-2. **แก้ปัญหาการคำนวณ Decimal Odds:** ปรับปรุงการ Parsing ทศนิยมเพื่อคำนวณยอดเงินที่ชนะ (Won Bets) ให้แม่นยำและเสถียร
-3. **แก้ปัญหากดเดิมพันไม่ได้ (Overlay Issue):** นำโค้ดลบ Overlay ของ Betslip ออก ซึ่งก่อนหน้านี้ก่อให้เกิดปัญหาการคลิกใน Live Betting Flow
-4. **แก้ปัญหาการแสดงผล Frontend:** กรองรายการคู่ที่ "เสมอ (Draw)" หรือ "โมฆะ (Void)" ออกจากคอลัมน์ "รอลุ้น" เพื่อให้ยอดตรงกับเว็บจริง
-5. **เพิ่มสคริปต์สำหรับ VPS:** เพิ่ม `cleanup-vps-db.ts`, `safe-cleanup-vps.ts`, และ `start-pm2.ts` เพื่อจัดการ Database และรันเซิร์ฟเวอร์ด้วย PM2 ได้ง่ายขึ้น
 
 ---
 
@@ -37,7 +29,7 @@
 
 ### [Frontend Services & Dashboard UI]
 * **[api_service.dart](file:///c:/FootballHunter2/frontend/lib/services/api_service.dart)** - เพิ่มคำสั่งเรียก API ยอดเงินสดในกระเป๋า
-* **[bet_history_screen.dart](file:///c:/FootballHunter2/frontend/lib/screens/bet_history_screen.dart)** - ปรับแต่ง UI ช่องสถิติกล่อง Real Bot ให้แสดง **"เงินคงเหลือจริง"** สดๆ จากหน้าเว็บ, กรองคู่เสมอ/โมฆะออกจาก "รอลุ้น" และทำ Auto-refresh ทุก 30 วินาที
+* **[bet_history_screen.dart](file:///c:/FootballHunter2/frontend/lib/screens/bet_history_screen.dart)** - ปรับแต่ง UI ช่องสถิติกล่อง Real Bot ให้แสดง **"เงินคงเหลือจริง"** สดๆ จากหน้าเว็บพร้อมรีเฟรชออโต้
 
 ---
 
