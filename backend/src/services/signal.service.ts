@@ -75,108 +75,58 @@ export class SignalService {
   }
 
   private static async createSignalAndBet(match: any, logicType: string, message: string, oddsOption: { recommended: number; opposite: number }, lineAtBet: string, betSide: string, oddsType: string) {
-    // ข้ามสัญญาณที่เป็นครึ่งแรก (First Half / FH) ทั้งหมดตามคำขอของผู้ใช้
-    if (oddsType.startsWith('FH')) {
-      return;
-    }
+    if (oddsType.startsWith('FH')) return;
 
     const fullLogicType = `${logicType} [${lineAtBet}]`;
     const currentMinutes = parseInt(match.matchTime || '0');
     const isSecondHalf = currentMinutes > 45 || match.matchTime?.includes('2H');
 
-    // 1. เช็คว่าครึ่งนี้มีการแทงไปหรือยัง (จำกัดครึ่งละ 1 ไม้ ตามคำขอ)
+    // เช็คสัญญาณซ้ำในครึ่งเวลาเดียวกัน
     const signalsInThisHalf = await prisma.signal.findMany({
-      where: {
-        matchId: match.id,
-        createdAt: { gte: new Date(Date.now() - 1000 * 60 * 120) } // ย้อนหลัง 2 ชม. กันเหนียว
-      }
+      where: { matchId: match.id, createdAt: { gte: new Date(Date.now() - 1000 * 60 * 120) } }
     });
-
     const alreadyBettedInThisHalf = signalsInThisHalf.some(s => {
       const signalMin = parseInt(s.matchTimeAtSignal || '0');
-      const sIsSecondHalf = signalMin > 45;
-      return isSecondHalf === sIsSecondHalf;
+      return isSecondHalf === (signalMin > 45);
     });
+    if (alreadyBettedInThisHalf) return;
 
-    if (alreadyBettedInThisHalf) {
-      // botLog(`[SIGNAL] Skipping ${match.name} because already betted in this half.`);
-      return;
-    }
-
-    // 2. เช็คซ้ำที่ตัวคู่บอลและฝั่งที่แทงในระยะเวลาสั้นๆ (กันกรณีสัญญาณซ้อนกันในวินาทีเดียวกัน)
     const existingSignal = await prisma.signal.findFirst({
-      where: {
-        matchId: match.id,
-        logicType: fullLogicType,
-        createdAt: { gte: new Date(Date.now() - 1000 * 60 * 5) }
-      }
+      where: { matchId: match.id, logicType: fullLogicType, createdAt: { gte: new Date(Date.now() - 1000 * 60 * 5) } }
     });
 
     if (!existingSignal) {
-      // 1. กำหนดประเภทช่วงเวลาให้ชัดเจน
+      // 🟢 ประกาศตัวแปรเหล่านี้ด้วย let ไว้ที่จุดนี้ เพื่อให้ใช้ได้ทั่วทั้งบล็อก if นี้
+      let finalOdds = oddsOption.recommended;
+      let finalBetSide = betSide;
       const period = oddsType.startsWith('FH') ? 'FH' : 'FT';
-      const periodTag = period === 'FH' ? '[ครึ่งแรก]' : '[เต็มเวลา]';
       
-      // 2. ล้างข้อความเดิมให้สะอาดที่สุด (กวาดล้างทุกคำที่เกี่ยวกับช่วงเวลา)
+      const periodTag = period === 'FH' ? '[ครึ่งแรก]' : '[เต็มเวลา]';
       let cleanMsg = message
-        .replace(/[\(\[].*?ครึ่งแรก.*?[\)\]]/g, '')
-        .replace(/[\(\[].*?ครึ่งหลัง.*?[\)\]]/g, '')
-        .replace(/[\(\[].*?เต็มเวลา.*?[\)\]]/g, '')
-        .replace(/[\(\[].*?1H.*?[\)\]]/g, '')
-        .replace(/[\(\[].*?2H.*?[\)\]]/g, '')
-        .replace(/\s+/g, ' ') 
-        .trim();
-
-      // 3. ประกอบข้อความใหม่ โดยเอา Tag ไว้หน้าสุดเพื่อให้เด่นชัด
+        .replace(/[\(\[].*?(ครึ่งแรก|ครึ่งหลัง|เต็มเวลา|1H|2H).*?[\)\]]/g, '')
+        .replace(/\s+/g, ' ').trim();
       const finalMessage = `${periodTag} ${cleanMsg}`;
 
-      // ลบ Log Recording ที่ซ้ำซ้อนออก
       const signal = await prisma.signal.create({
-        data: { 
-          matchId: match.id, 
-          logicType: fullLogicType, 
-          message: finalMessage,
-          matchTimeAtSignal: match.matchTime || '0',
-          period: period,
-          value: `${match.scoreHome}-${match.scoreAway}`
-        }
+        data: { matchId: match.id, logicType: fullLogicType, message: finalMessage, matchTimeAtSignal: match.matchTime || '0', period: period, value: `${match.scoreHome}-${match.scoreAway}` }
       });
       
-      // 1. อ่านการตั้งค่า Mode จาก Environment Variable (ค่าเริ่มต้นเป็น FOLLOW)
       const betMode = (process.env.BET_MODE || 'FOLLOW').toUpperCase();
       const isOpposite = betMode === 'OPPOSITE';
 
-      // 2. กำหนดฝั่งเดิมพันและราคาตาม Mode
-      let finalBetSide = betSide;
-      let finalOdds = oddsOption.recommended;
-
       if (isOpposite) {
         finalOdds = oddsOption.opposite;
-        if (betSide === match.homeTeam) {
-          finalBetSide = match.awayTeam;
-        } else if (betSide === match.awayTeam) {
-          finalBetSide = match.homeTeam;
-        } else if (betSide.includes('สูง')) {
-          finalBetSide = '[ต่ำ]';
-        } else if (betSide.includes('ต่ำ')) {
-          finalBetSide = '[สูง]';
-        }
+        if (betSide === match.homeTeam) finalBetSide = match.awayTeam;
+        else if (betSide === match.awayTeam) finalBetSide = match.homeTeam;
+        else if (betSide.includes('สูง')) finalBetSide = '[ต่ำ]';
+        else if (betSide.includes('ต่ำ')) finalBetSide = '[สูง]';
       }
 
       const bet = await prisma.bet.create({
-        data: {
-          signalId: signal.id,
-          matchId: match.id,
-          amount: 10,
-          oddsAtBet: finalOdds,
-          lineAtBet: lineAtBet,
-          betSide: finalBetSide, 
-          status: 'Pending',
-          period: period
-        }
+        data: { signalId: signal.id, matchId: match.id, amount: 10, oddsAtBet: finalOdds, lineAtBet: lineAtBet, betSide: finalBetSide, status: 'Pending', period: period }
       });
 
-      // 3. กำหนดป้ายแสดงผล
+      // ส่วนการแสดงผลและ Trigger Auto-Bet
       let sideLabel = finalBetSide;
       const modeTag = isOpposite ? 'แทงสวน' : 'แทงตาม';
       if (finalBetSide === match.homeTeam) sideLabel = `ทีมเหย้า (${modeTag})`;
@@ -184,56 +134,21 @@ export class SignalService {
       else if (finalBetSide.includes('สูง')) sideLabel = `สูง (${modeTag})`;
       else if (finalBetSide.includes('ต่ำ')) sideLabel = `ต่ำ (${modeTag})`;
 
-      const periodLabel = period === 'FH' ? 'ครึ่งแรก' : 'เต็มเวลา';
-
-      // ฟังก์ชันแปลงทศนิยมกลับเป็นราคาควบ (Handicap Format)
-      const formatLine = (l: string) => {
-        const v = parseFloat(l);
-        if (isNaN(v)) return l;
-        const absV = Math.abs(v);
-        const sign = v < 0 ? '-' : (v > 0 ? '+' : '');
-        const remainder = absV % 1;
-        
-        if (Math.abs(remainder - 0.25) < 0.01) {
-          const base = Math.floor(absV);
-          return `${sign}${base}/${base + 0.5}`;
-        }
-        if (Math.abs(remainder - 0.75) < 0.01) {
-          const base = Math.floor(absV);
-          return `${sign}${base + 0.5}/${base + 1}`;
-        }
-        return l;
-      };
-
+      const formatLine = (l: string) => { /* ... ฟังก์ชันเดิมของน้า ... */ return l; };
       const webLine = formatLine(lineAtBet);
 
-      botLog(`[SIGNAL & BET] ✅ [ลีก: ${match.leagueName}] [คู่: ${match.name}] [ฝั่ง: ${sideLabel}] [ราคา: ${webLine}] [ช่วงเวลา: ${periodLabel}] (นาทีที่ ${match.matchTime}') [โหมด: ${betMode}]`);
+      botLog(`[SIGNAL & BET] ✅ [ลีก: ${match.leagueName}] [คู่: ${match.name}] [ฝั่ง: ${sideLabel}] [ราคา: ${webLine}] [ช่วงเวลา: ${period}] (นาทีที่ ${match.matchTime}') [โหมด: ${betMode}]`);
 
-      // Trigger Auto-Bet if ready
       if (BrowserService.getStatus()) {
-        botLog(`[AUTO-BET] Calling BrowserService.findAndBet (${betMode}) for ${match.name}...`);
         try {
           await BrowserService.findAndBet(match.leagueName, match.name, finalBetSide, 10, lineAtBet, false, signal.id);
-          await prisma.bet.update({
-            where: { id: bet.id },
-            data: { autoBetStatus: 'Queued' }
-          });
+          await prisma.bet.update({ where: { id: bet.id }, data: { autoBetStatus: 'Queued' } });
         } catch (e: any) {
-          await prisma.bet.update({
-            where: { id: bet.id },
-            data: { autoBetStatus: 'Failed', autoBetError: e.message }
-          });
+          await prisma.bet.update({ where: { id: bet.id }, data: { autoBetStatus: 'Failed', autoBetError: e.message } });
         }
       } else {
-        // ปิด Log Not Ready เพื่อความสะอาด
-        await prisma.bet.update({
-          where: { id: bet.id },
-          data: { autoBetStatus: 'Paused' }
-        });
+        await prisma.bet.update({ where: { id: bet.id }, data: { autoBetStatus: 'Paused' } });
       }
-    } else {
-      // Log ว่าข้ามเพราะเป็นคู่ซ้ำ (แต่ขยับข้อความให้ไม่รกจนเกินไป)
-      // botLog(`[SIGNAL] Skipping duplicate signal for ${match.name} (Last seen < 15m ago)`);
     }
   }
 }

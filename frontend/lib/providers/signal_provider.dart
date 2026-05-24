@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import '../models/football_models.dart';
 import '../services/api_service.dart';
+import 'package:flutter/foundation.dart';
 
 class SignalProvider with ChangeNotifier {
   List<FootballMatch> _matches = [];
@@ -27,7 +28,7 @@ class SignalProvider with ChangeNotifier {
       'autoConnect': true,
     });
 
-    _socket.onConnect((_) => print('Connected to WebSocket'));
+    _socket.onConnect((_) => debugPrint('Connected to WebSocket'));
     _socket.on('data_updated', (_) => fetchData());
   }
 
@@ -37,13 +38,13 @@ class SignalProvider with ChangeNotifier {
       _signals = await ApiService.getSignals();
       _latestBets = await ApiService.getLatestBets();
       _isBrowserReady = await ApiService.getBrowserStatus();
-      
+
       // เรียงลำดับคู่บอล: คู่ที่มี Bet Pending ให้ขึ้นก่อน
       _sortMatches();
-      
+
       notifyListeners();
     } catch (e) {
-      print('Error fetching data: $e');
+      debugPrint('Error fetching data: $e');
     }
   }
 
@@ -87,17 +88,19 @@ class SignalProvider with ChangeNotifier {
         final status = await ApiService.getTestStatus();
         final testRunning = status['isTestRunning'] ?? false;
         final queueEmpty = status['isQueueEmpty'] ?? true;
-        
+
         bool changed = false;
-        
+
         if (testRunning != _isTestRunning) {
           _isTestRunning = testRunning;
           changed = true;
         }
 
-        // หากทำงานเสร็จสิ้นทั้งหมดแล้ว
+        // หากทำงานเสร็จสิ้นทั้งหมดแล้ว (queueEmpty, backend ไม่รัน, และ frontend ยังถือว่ารันอยู่)
         if (queueEmpty && !testRunning && _isTestRunning) {
           _isTestRunning = false;
+          _selectedSignalIds
+              .clear(); // 🟢 เพิ่ม: เคลียร์ selectedSignalIds เมื่อ Flow จบจริงๆ
           _testStatus = "การทดสอบเสร็จสิ้นทั้งหมดแล้ว";
           changed = true;
         }
@@ -113,7 +116,7 @@ class SignalProvider with ChangeNotifier {
           notifyListeners();
         }
       } catch (e) {
-        print('Error in periodic status check: $e');
+        debugPrint('Error in periodic status check: $e');
       }
       return true; // ลูปทำงานตลอดไป
     });
@@ -121,7 +124,7 @@ class SignalProvider with ChangeNotifier {
 
   Future<void> startBulkTest() async {
     if (_selectedSignalIds.isEmpty) return;
-    
+
     _isTestRunning = true;
     _testStatus = "กำลังเริ่มการทดสอบ (${_selectedSignalIds.length} รายการ)...";
     _testLogs = ["กำลังเตรียมระบบ..."];
@@ -129,17 +132,16 @@ class SignalProvider with ChangeNotifier {
 
     try {
       int count = 1;
-      
-      // แปลงเป็น List ของ Signal แล้วเรียงลำดับตามเวลาสร้างจากเก่าไปใหม่ (FIFO: ล่างขึ้นบน)
+
+      // แปลงเป็น List ของ Signal
       final signalsToProcess = _selectedSignalIds.map((id) {
         return _signals.firstWhere((s) => s.id == id);
       }).toList();
-      
-      // เรียงจากเวลาเก่าที่สุดไปใหม่ที่สุด (เก่าสุดอยู่ด้านล่างสุดของจอภาพ จะถูกรันก่อน)
+
+      // เรียงลำดับ
       signalsToProcess.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-      
       final idsToProcess = signalsToProcess.map((s) => s.id).toList();
-      
+
       for (var id in idsToProcess) {
         final signal = _signals.firstWhere((s) => s.id == id);
         final match = signal.match;
@@ -150,29 +152,30 @@ class SignalProvider with ChangeNotifier {
           notifyListeners();
           continue;
         }
-        
-        String league = match.leagueName;
-        String matchName = match.name;
-        String side = bet.betSide ?? "ทีมเหย้า"; 
-        String targetLine = bet.lineAtBet ?? "0";
 
-        _testStatus = "กำลังส่งคิวที่ $count/${idsToProcess.length}: $matchName";
+        _testStatus =
+            "กำลังส่งคิวที่ $count/${idsToProcess.length}: ${match.name}";
         notifyListeners();
 
         await ApiService.testAutoBot(
-          leagueName: league,
-          matchName: matchName,
-          betSide: side,
+          leagueName: match.leagueName,
+          matchName: match.name,
+          betSide: bet.betSide ?? "ทีมเหย้า",
           amount: 10.0,
-          targetLine: targetLine,
+          targetLine: bet.lineAtBet ?? "0",
         );
         count++;
       }
-      _testStatus = "ส่งงานเข้าคิวครบแล้ว (${idsToProcess.length} รายการ) | รอทำตามขั้นตอน...";
+      _testStatus =
+          "ส่งงานเข้าคิวครบแล้ว (${idsToProcess.length} รายการ) | รอทำตามขั้นตอน...";
     } catch (e) {
       _testStatus = "เกิดข้อผิดพลาด: $e";
+    } finally {
+      // ❌ ลบการเคลียร์ selectedSignalIds และ isTestRunning ออกจาก finally block
+      // เพื่อให้ checkbox ยังคงอยู่และสถานะการรันไม่ถูกรีเซ็ตก่อนเวลาอันควร
+      // สถานะการรันและ selectedSignalIds จะถูกจัดการผ่าน _startPeriodicStatusCheck หรือ clearTestQueue() เท่านั้น
+      notifyListeners();
     }
-    notifyListeners();
   }
 
   Future<void> stopTest() async {
@@ -192,13 +195,13 @@ class SignalProvider with ChangeNotifier {
 
   Future<void> nextStep() async {
     await ApiService.nextStep();
-    
+
     // หลังจากกด Next ลองเช็คสถานะทันที
     final status = await ApiService.getTestStatus();
     if (status['isQueueEmpty'] == true && status['isTestRunning'] == false) {
-       _isTestRunning = false;
-       _testStatus = "การทดสอบเสร็จสิ้นแล้ว";
-       notifyListeners();
+      _isTestRunning = false;
+      _testStatus = "การทดสอบเสร็จสิ้นแล้ว";
+      notifyListeners();
     }
   }
 
@@ -212,7 +215,7 @@ class SignalProvider with ChangeNotifier {
     _matches.sort((a, b) {
       bool aPending = pendingMatchIds.contains(a.id);
       bool bPending = pendingMatchIds.contains(b.id);
-      
+
       if (aPending && !bPending) return -1;
       if (!aPending && bPending) return 1;
       return 0;
