@@ -20,7 +20,7 @@ graph TD
 ### 1. Technology Stack
 *   **Backend:** Node.js, TypeScript, Express, Prisma ORM, PostgreSQL, Playwright (for Browser Automation).
 *   **Frontend:** Flutter Web, `http-server` (for static hosting).
-*   **Databases:** PostgreSQL (persistent logs and signals), Redis (optional for caching/queues).
+*   **Databases:** PostgreSQL (persistent logs and signals).
 
 ---
 
@@ -51,7 +51,7 @@ Dynamically rendered pages often redirect the user to unrelated sub-pages (e.g. 
 
 ### 3. Layout Stabilization Buffers (Defeating Layout Shifts)
 Dynamic elements shift as images and assets load, causing accidental clicks.
-*   **Technique:** Introduce timouts at critical transaction milestones (e.g. 3000ms at task start, 5000ms on Odds page load, 2000ms before click confirmation).
+*   **Technique:** Introduce timeouts at critical transaction milestones (e.g. 3000ms at task start, 5000ms on Odds page load, 2000ms before click confirmation).
 *   **Rule of Thumb:** A 3–5 second delay on high-frequency transactions saves hours of session-recovery overhead.
 
 ### 4. Side-Aware Match Selection (Scope-Bound Locating)
@@ -68,7 +68,11 @@ Many platforms block raw element value writing (`element.fill('10')`) to prevent
 
 ### 6. Post-Bet Cleanup & Mask/Overlay Clearance
 After a bet is placed, success screens or background overlays (masks) freeze navigation.
-*   **Resolution:** Program the bot to click outside the dialog (on the dark background overlay/mask) to dismiss the success window, check for and close promotional popups, wait 4000ms, and fall back to a force reload if navigation back to the main sports tab is blocked.
+*   **Resolution:** Program the bot to click outside the dialog (on the dark background overlay/mask) to dismiss the success window, check for promotional popups, wait 4000ms, and fall back to a force reload if navigation back to the main sports tab is blocked.
+
+### 7. Collision Avoidance in Multi-Mode Running
+*   **Scenario:** Running the Auto-Bot (Real-time auto placement) while simultaneously launching manual bulk tests (Test Bot Mode) on the same browser instance causes command clashes.
+*   **Prevention Logic:** The frontend `SignalProvider` intercepts the "Start Testing" request. If `isBrowserReady` (Auto-Bet: ON) is active, it flags it false and posts a disable request to `/browser/ready` to pause the database scraper interval before enqueuing test tasks. This frees the single-thread processor for the Test Bot.
 
 ---
 
@@ -76,15 +80,14 @@ After a bet is placed, success screens or background overlays (masks) freeze nav
 
 Due to rapid scraping (crawling live odds multiple times per minute), tables like `OddsHistory` can bloat to **400,000+ rows** in a single day, degrading query response times.
 
-### 1. Cascading Truncation (`clean-db.js`)
+### 1. Cascading Truncation (`clean-db.js` / `manual-cleanup.ts`)
 To safely reset the environment without breaking relational integrity, a dedicated raw PostgreSQL script is used.
-*   ** CASCADE Execution:** Truncating master tables like `Match` with `CASCADE` automatically clears all child records (`Odds`, `OddsHistory`, `Signal`, `Bet`, `RealBetLog`) in a single transaction.
-*   **Implementation:**
-    ```javascript
-    const client = new Client({ connectionString: env.DATABASE_URL });
-    await client.connect();
-    await client.query(`TRUNCATE TABLE "Bet", "Signal", "OddsHistory", "Odds", "Match", "RealBetLog" CASCADE`);
+*   **CASCADE Execution:** Truncating master tables like `Match` with `CASCADE` automatically clears all child records (`Odds`, `OddsHistory`, `Signal`, `Bet`, `RealBetLog`) in a single transaction.
+*   **Prisma Raw SQL Execution:**
+    ```typescript
+    await prisma.$executeRawUnsafe(`TRUNCATE TABLE "Bet", "Signal", "OddsHistory", "Odds", "Match", "RealBetLog" CASCADE;`);
     ```
+*   **Benefit:** Instantly wipes gigabytes of data and handles foreign key constraints without triggering database violations.
 
 ---
 
@@ -100,28 +103,22 @@ The tracking UI is designed to give the user instant real-time reassurance that 
 *   **Problem:** Columns for "Won/Lost/Pending" bets showed mock values instead of the real bot logs.
 *   **Solution:** Map the cards and counts in the bottom columns directly from the active `filteredRealBets` list by matching them with their corresponding `Bet` entity from `allBets` using the shared `signalId`.
 *   **Result:** The totals shown in the columns perfectly match the totals shown on the summary board.
+
+### 3. State-Memorized UI Reset Pattern
+*   **Problem:** Resetting log overlays and top status bars on test completion would fail because state transitions occurred before checking.
+*   **Solution:** Introduce a temporary variable (`wasTestRunning`) that caches the previous render loop state. Check this cache against the new backend response:
     ```dart
-    // Dart code mapping
-    for (var realBet in filteredRealBets) {
-      if (realBet.status == 'Executed') {
-        var mockBetMatch = allBets.where((b) => b.signalId == realBet.signalId).toList();
-        if (mockBetMatch.isNotEmpty) {
-          var mockBet = mockBetMatch.first;
-          if (mockBet.status == 'Won') {
-            wonBets.add(mockBet);
-          } else if (mockBet.status == 'Lost') {
-            lostBets.add(mockBet);
-          } else {
-            pendingBets.add(mockBet);
-          }
-        }
-      }
+    bool wasTestRunning = _isTestRunning;
+    if (testRunning != _isTestRunning) {
+      _isTestRunning = testRunning;
+    }
+    if (queueEmpty && !testRunning && wasTestRunning) {
+      _selectedSignalIds.clear();
+      _testLogs.clear();
+      _testStatus = "ระบบพร้อมทดสอบ";
     }
     ```
-
-### 3. Dynamic Green Match Minutes Indicator
-*   **Visual Cue:** Pending bets render their active live match time (e.g. `นาทีที่ 76'`) in a prominent, blinking or bold **green accent** (`Colors.greenAccent`).
-*   **Robust Fallback:** If the live match time is not populated by the scraper, the widget falls back gracefully to `bet.signal.matchTimeAtSignal` to avoid blank slots.
+    This ensures that when a test finishes, it triggers UI cleanup and pulls fresh data cleanly.
 
 ---
 
@@ -144,7 +141,3 @@ The tracking UI is designed to give the user instant real-time reassurance that 
 ### 2. Isolated Logging Strategy
 *   **Production Logs (`bot.log`):** Tracks scraper runs and live match updates.
 *   **Simulation Logs (`testbot.log`):** Tracks dry runs and mock bets.
-*   **Real-time Tail Tailing (PowerShell):**
-    ```powershell
-    Get-Content bot.log -Wait -Tail 50 -Encoding utf8
-    ```
