@@ -100,6 +100,7 @@ class ApiService {
     required String betSide,
     required double amount,
     required String targetLine,
+    String? signalId,
   }) async {
     await http.post(
       Uri.parse('$baseUrl/browser/test-bot'),
@@ -110,6 +111,7 @@ class ApiService {
         'betSide': betSide,
         'amount': amount,
         'targetLine': targetLine,
+        'signalId': signalId,
       }),
     );
   }

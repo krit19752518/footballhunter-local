@@ -17,7 +17,9 @@ class TestBotScreen extends StatelessWidget {
       ),
       body: Consumer<SignalProvider>(
         builder: (context, provider, child) {
-          final signals = provider.signals;
+          final signals = provider.signals
+              .where((s) => s.bet?.autoBetStatus != 'Executed')
+              .toList();
           final isRunning = provider.isTestRunning;
 
           return Column(

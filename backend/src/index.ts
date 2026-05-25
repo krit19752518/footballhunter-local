@@ -144,7 +144,8 @@ app.post('/browser/test-bot', async (req, res) => {
       betSide = 'โวไลตตา ดิชา', 
       amount = 10, 
       targetLine = '0',
-      isTest = true
+      isTest = true,
+      signalId
     } = req.body || {};
 
     log(`[TEST-BOT] 🧪 Triggering dynamic test bot: ${matchName}`);
@@ -157,7 +158,7 @@ app.post('/browser/test-bot', async (req, res) => {
       amount,
       targetLine,
       isTest, 
-      'dummy-task-id-123'
+      signalId || 'dummy-task-id-123'
     );
 
     res.json({ success: true, message: 'Test bot triggered', data: { leagueName, matchName, betSide, amount, targetLine, isTest } });

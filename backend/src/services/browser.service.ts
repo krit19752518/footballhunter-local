@@ -240,6 +240,14 @@ private static async startQueueProcessor(isTest?: boolean) {
 
       if (this.isProcessing) return;
 
+      if (this.queue.length === 0) {
+        if (this.isTestRunning) {
+          this.isTestRunning = false;
+          this.currentTaskIsTest = false;
+          this.smartLog(`🏁 [QUEUE] All test tasks completed. Resetting test running status.`, true);
+        }
+      }
+
       let nextTask: any = null;
       let nextTaskIndex = -1;
       if (this.queue.length > 0) {
@@ -426,6 +434,36 @@ private static async executeTask(task: any) {
 
       if (isSimulationTask) {
           this.smartLog(`✅ [TEST COMPLETE] บันทึกบิลลง DB สำเร็จ`);
+      }
+
+      if (taskId) {
+          try {
+              const betRecord = await prisma.bet.findUnique({ where: { signalId: taskId } });
+              const oddsAtBet = betRecord?.oddsAtBet ?? 1.80;
+
+              // 1. สร้างประวัติการเดิมพันจริงใน RealBetLog
+              await prisma.realBetLog.create({
+                  data: {
+                      signalId: taskId,
+                      matchName,
+                      leagueName,
+                      betSide,
+                      oddsAtBet,
+                      lineAtBet: targetLine,
+                      amount,
+                      status: 'Executed'
+                  }
+              });
+
+              // 2. ปรับสถานะการแทงของบิลเป็น Executed
+              await prisma.bet.updateMany({
+                  where: { signalId: taskId },
+                  data: { autoBetStatus: 'Executed' }
+              });
+              this.smartLog(`💾 [DATABASE] บันทึก RealBetLog และอัปเดตสถานะบิล [${taskId}] สำเร็จ`);
+          } catch (dbErr: any) {
+              this.smartLog(`⚠️ ไม่สามารถอัปเดตประวัติลงฐานข้อมูลได้: ${dbErr.message}`);
+          }
       }
 
       await this.cleanupAndGoBack(page);

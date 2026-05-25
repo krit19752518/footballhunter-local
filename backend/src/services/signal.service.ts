@@ -11,6 +11,15 @@ export class SignalService {
 
     if (!match) return;
 
+    // ระบบคัดกรองลีก (Blacklist) ข้ามการทำงานหากเป็นลีกย่อย/เยาวชน/สมัครเล่น ที่มีความผันผวนของราคาสูง
+    const blacklistWords = ['youth', 'u19', 'u20', 'u21', 'u23', 'women', 'หญิง', 'เยาวชน', 'reserve', 'amateur', 'สมัครเล่น', 'friendly', 'กระชับมิตร'];
+    const leagueNameLower = match.leagueName.toLowerCase();
+    const isBlacklisted = blacklistWords.some(word => leagueNameLower.includes(word));
+    
+    if (isBlacklisted) {
+      return; // สั่งข้ามการเช็คสัญญาณทั้งหมดของคู่นี้
+    }
+
     for (const odds of match.odds) {
       if (odds.type === 'HDP' || odds.type === 'FH-HDP') {
         await this.checkStrongFavoriteDrop(match, odds);
@@ -28,16 +37,25 @@ export class SignalService {
     const current = history[0];
     const oldest = history[history.length - 1]; 
 
-    const diff = (oldest.homeOdds || 0) - (current.homeOdds || 0);
+    const homeDiff = (oldest.homeOdds || 0) - (current.homeOdds || 0);
+    const awayDiff = (oldest.awayOdds || 0) - (current.awayOdds || 0);
 
-    // ถ้าราคาไหลลงเกิน 0.03 (ปรับให้สัญญาณออกถี่ขึ้นเพื่อเทสระบบตามคำขอ)
-    if (diff >= 0.03) {
+    const THRESHOLD = 0.15; // ปรับเกณฑ์เป็น 0.15 เพื่อลดสัญญาณรบกวน (Noise) และหาการทุบราคาของจริง
+
+    if (homeDiff >= THRESHOLD) {
       const oddsOption = {
         recommended: current.homeOdds || 1.8,
         opposite: current.awayOdds || 1.8
       };
       const betSide = match.homeTeam;
-      await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `📈 ต่อไหลแรง: ${match.homeTeam} ราคาลดเหลือ ${current.homeOdds} (ไหลลง ${diff.toFixed(2)}) 🔥 วางเดิมพัน ${betSide}`, oddsOption, odds.line, betSide, odds.type);
+      await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `📈 ต่อไหลแรง: ${match.homeTeam} ราคาลดเหลือ ${current.homeOdds} (ไหลลง ${homeDiff.toFixed(2)}) 🔥 วางเดิมพัน ${betSide}`, oddsOption, odds.line, betSide, odds.type);
+    } else if (awayDiff >= THRESHOLD) {
+      const oddsOption = {
+        recommended: current.awayOdds || 1.8,
+        opposite: current.homeOdds || 1.8
+      };
+      const betSide = match.awayTeam;
+      await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `📈 ต่อไหลแรง: ${match.awayTeam} ราคาลดเหลือ ${current.awayOdds} (ไหลลง ${awayDiff.toFixed(2)}) 🔥 วางเดิมพัน ${betSide}`, oddsOption, odds.line, betSide, odds.type);
     }
   }
 
@@ -64,7 +82,15 @@ export class SignalService {
   private static async checkLateOverGoal(match: any, odds: any) {
     const minutes = parseInt(match.matchTime || '0');
     
-    if (match.status === 'Live' && odds.line === '0.5' && minutes >= 75 && (odds.overOdds || 0) < 2.0) {
+    // คำนวณผลต่างประตู หากเกมขาดแล้ว (ห่างกันเกิน 1 ลูก) ทีมจะไม่ค่อยบุก ให้ข้ามไป
+    const scoreHome = match.scoreHome || 0;
+    const scoreAway = match.scoreAway || 0;
+    const goalDiff = Math.abs(scoreHome - scoreAway);
+    
+    // เสมอกัน หรือ ห่างกัน 1 ลูก (เช่น 0-0, 1-1, 1-0, 0-1) ถึงจะน่าลุ้นประตูท้ายเกม
+    const isHighlyMotivated = goalDiff <= 1;
+
+    if (match.status === 'Live' && odds.line === '0.5' && minutes >= 75 && (odds.overOdds || 0) < 2.0 && isHighlyMotivated) {
       const oddsOption = {
         recommended: odds.overOdds || 1.8,
         opposite: odds.underOdds || 1.8

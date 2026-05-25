@@ -90,19 +90,20 @@ class SignalProvider with ChangeNotifier {
         final queueEmpty = status['isQueueEmpty'] ?? true;
 
         bool changed = false;
+        bool wasTestRunning = _isTestRunning;
 
         if (testRunning != _isTestRunning) {
           _isTestRunning = testRunning;
           changed = true;
         }
 
-        // หากทำงานเสร็จสิ้นทั้งหมดแล้ว (queueEmpty, backend ไม่รัน, และ frontend ยังถือว่ารันอยู่)
-        if (queueEmpty && !testRunning && _isTestRunning) {
-          _isTestRunning = false;
-          _selectedSignalIds
-              .clear(); // 🟢 เพิ่ม: เคลียร์ selectedSignalIds เมื่อ Flow จบจริงๆ
-          _testStatus = "การทดสอบเสร็จสิ้นทั้งหมดแล้ว";
+        // หากทำงานเสร็จสิ้นทั้งหมดแล้ว (คิวว่าง, backend ไม่รัน, และ frontend เพิ่งรันเสร็จ)
+        if (queueEmpty && !testRunning && wasTestRunning) {
+          _selectedSignalIds.clear(); // 🟢 เคลียร์ check box
+          _testLogs.clear(); // 🟢 ล้างประวัติ Log เพื่อให้หน้าต่าง Log สีดำพับเก็บลงไป
+          _testStatus = "ระบบพร้อมทดสอบ"; // 🟢 รีเซ็ตแถบสถานะด้านบนเป็นสีน้ำเงินตามปกติ
           changed = true;
+          await fetchData(); // 🟢 ดึงข้อมูลล่าสุดทันทีหลังเทสจบ เพื่ออัปเดตสถานะของตารางและสถิติ
         }
 
         // ดึง Logs มาแสดงผลเสมอเมื่อบอททำงานอยู่
@@ -128,6 +129,14 @@ class SignalProvider with ChangeNotifier {
     _isTestRunning = true;
     _testStatus = "กำลังเริ่มการทดสอบ (${_selectedSignalIds.length} รายการ)...";
     _testLogs = ["กำลังเตรียมระบบ..."];
+    
+    // 🟢 ตรวจสอบและปิด Auto-Bot หากเปิดใช้งานอยู่ เพื่อป้องกันคำสั่งชนกัน
+    if (_isBrowserReady) {
+      _isBrowserReady = false;
+      await ApiService.setBrowserReady(false); // ยิง API สั่งหลังบ้านให้หยุด
+      _testLogs.add("⚠️ ปิดระบบ Auto-Bet ชั่วคราว เพื่อสละเบราว์เซอร์ให้โหมดทดสอบ");
+    }
+
     notifyListeners();
 
     try {
@@ -163,6 +172,7 @@ class SignalProvider with ChangeNotifier {
           betSide: bet.betSide ?? "ทีมเหย้า",
           amount: 10.0,
           targetLine: bet.lineAtBet ?? "0",
+          signalId: signal.id,
         );
         count++;
       }
