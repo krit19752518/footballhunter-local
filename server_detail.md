@@ -5,9 +5,11 @@ Remote User : ubuntu
 Password : Kr1t@12342518
 
 Backend
+cd backend
 npm run dev
 
 FrontEnd
+cd frontend
 flutter build web --release
 flutter run -d web-server --web-port=8080 --release
 

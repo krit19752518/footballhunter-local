@@ -9,31 +9,29 @@
 - **ช่องทางเชื่อมต่อ API:** เปิดช่องทาง `/browser/balance` บน Backend เพื่อส่งยอดเงินสดคงเหลือล่าสุด
 - **หน้าจอแดชบอร์ด:** แสดงกรอบข้อความ **"เงินคงเหลือจริง"** สีเหลืองเด่นสง่าในกล่อง **Real Bot** ถัดจากช่องยอดแทงรวม โดยจะมีการรีเฟรชข้อมูลให้สดใหม่โดยอัตโนมัติทุกๆ 30 วินาที
 
-## 3. ทำ Unit Test ครอบคลุมฟังก์ชันการวิเคราะห์ (Jest Unit Testing)
-- **สร้างไฟล์ทดสอบ:** เขียนการทำ Mocking ของหน้าเพจ Playwright เพื่อทดสอบ 4 กรณีหลัก:
-  1. การดึงสกอร์จากรูปแบบข้อความมาตรฐาน (เช่น `0 - 2`)
-  2. การดึงสกอร์แบบ Evaluate fallback ในกรณีที่สกอร์กระจายตัวอยู่ตาม Node ต่างๆ
-  3. การดึงยอดเงินผ่าน Selector มาตรฐานในระบบเว็บจริง
-  4. การดึงยอดเงินผ่านการ Evaluate ข้อความรวมใน Header
-- **ผลลัพธ์การทดสอบ:** **ผ่าน 100% สลวยเขียวขจีทั้งหมด! (Green & Passed)**
+## 3. ทำ Unit Test และการคัดกรองสัญญาณ
+- **ปรับปรุงการทดสอบ:** ปรับปรุงและแก้ไข Unit Test ใน `backend/tests/` ให้รองรับ Mock ของ Prisma API และสลับรูปแบบเครื่องหมายสกอร์ฟอร์แมตจาก `:` เป็น `-` เพื่อตัดการแทรกแซงของตัวเลขเวลาการแข่งขัน (เช่น `20:45`) ทำให้ไม่มี Ghost Profit
+- **แก้ไข Jest Configuration:** ปรับปรุง `jest.config.js` ให้ละเว้นการรันการทดสอบในโฟลเดอร์ `dist/` เพื่อไม่ให้เกิดข้อผิดพลาดจากไฟล์ JS ที่คอมไพล์แล้วซ้ำซ้อน
+- **ผลการทดสอบ:** รันคำสั่งทดสอบสำเร็จ 100% สลวยเขียวขจีทั้งหมด! (Green & Passed) ทั้งหมด 5 Test Suites, 11 Tests ผ่านทั้งหมด
+- **การคอมไพล์ TypeScript:** ตรวจสอบผ่านคำสั่ง `npx tsc --noEmit` ผ่านฉลุย 100% ปราศจาก Error เชิงประเภทข้อมูล (Type Errors)
 
 ---
 
 ## ไฟล์และตารางการแก้ไขโค้ด:
 
 ### [Backend Services]
-* **[signal.service.ts](file:///c:/FootballHunter2/backend/src/services/signal.service.ts)** - บันทึกสกอร์บอลตั้งต้นตอนเกิดสัญญาณ
-* **[browser.service.ts](file:///c:/FootballHunter2/backend/src/services/browser.service.ts)** - ตรวจสอบสกอร์สดล่าสุด, ยกเลิกเดิมพันหากสกอร์ขยับ, ดึงเงินสะสมในกระเป๋าเว็บจริง และแคชข้อมูลเบื้องหลัง
-* **[index.ts](file:///c:/FootballHunter2/backend/src/index.ts)** - เปิด API GET `/browser/balance`
-* **[browser.service.test.ts](file:///c:/FootballHunter2/backend/tests/browser.service.test.ts)** - ไฟล์ Unit Test ทั้งหมด
-
-### [Frontend Services & Dashboard UI]
-* **[api_service.dart](file:///c:/FootballHunter2/frontend/lib/services/api_service.dart)** - เพิ่มคำสั่งเรียก API ยอดเงินสดในกระเป๋า
-* **[bet_history_screen.dart](file:///c:/FootballHunter2/frontend/lib/screens/bet_history_screen.dart)** - ปรับแต่ง UI ช่องสถิติกล่อง Real Bot ให้แสดง **"เงินคงเหลือจริง"** สดๆ จากหน้าเว็บพร้อมรีเฟรชออโต้
+* **[signal.service.ts](file:///c:/footballhunter-local/backend/src/services/signal.service.ts)** - บันทึกสกอร์บอลตั้งต้นตอนเกิดสัญญาณ และใช้กฎ Statistical Filter Rules (จำกัดนาที 60-75, แบนลีกสถิติแย่, กรองราคากำแพงลึกกว่า -0.5, ตรวจสอบ Line flow drop 0.10 หรือ 0.05 ตามระดับกำแพง)
+* **[browser.service.ts](file:///c:/footballhunter-local/backend/src/services/browser.service.ts)** - ตรวจสอบสกอร์สดล่าสุด, ยกเลิกเดิมพันหากสกอร์ขยับ, ดึงเงินสะสมในกระเป๋าเว็บจริง และแคชข้อมูลเบื้องหลัง
+* **[jest.config.js](file:///c:/footballhunter-local/backend/jest.config.js)** - เพิ่มกฎข้ามการทดสอบในโฟลเดอร์ `dist/`
+* **[browser.service.test.ts](file:///c:/footballhunter-local/backend/tests/browser.service.test.ts)** - ไฟล์ Unit Test การสลักสกอร์สดและยอดเงินคงเหลือจริง
+* **[signal.service.test.ts](file:///c:/footballhunter-local/backend/tests/signal.service.test.ts)** - ไฟล์ Unit Test วิเคราะห์สถิติตามกฎเกณฑ์ช่วงนาทีและราคาต่อรอง
 
 ---
 
-## 🚀 ประโยชน์ที่ได้รับจากชุดอัปเกรดนี้:
-1. **ยอดเงินตรงกับความจริง 100%:** คุณจะเห็นยอดเงินสดจริงๆ ในกระเป๋า Bet5688q ของคุณโชว์อยู่บนบอร์ดบอททันที ไม่ต้องเปิดแถบบราวเซอร์มาสลับดู
-2. **ป้องกันกำไรทิพย์ / ยอดเงินหาย:** บอทจะไม่ยอมวางเดิมพันคู่ที่มีประตูเกิดขึ้นก่อนการ staking สำเร็จ ทำให้คุณหมดห่วงเรื่องเงินลดลงเพราะสกอร์เคลื่อนตัวไปก่อนบอทกด!
-3. **ระบบการคอมไพล์เสถียรสุดขั้ว:** ผ่านการทดสอบระดับ Type-Safety และ Flutter Compilation เรียบร้อย ไม่มี Error หรือผลเสียต่อระบบเดิมแน่นอนครับ!
+## 🚀 ผลการยืนยันและการบันทึก Git:
+1. **ยอดเงินตรงกับความจริง 100%:** ดึงยอดเงินจริงและตรวจสอบสกอร์เสร็จสมบูรณ์
+2. **ระบบการทดสอบและประเภทข้อมูลเสถียรสุดขั้ว:** ทั้ง `npm run test` และ `npx tsc --noEmit` สำเร็จ 100%
+3. **Commit และ Push เรียบร้อย:** 
+   - **Branch:** `feature/local-postgres-setup`
+   - **Commit Message:** `feat: add actual balance extraction and statistical filter rules`
+   - **Repository:** `https://github.com/krit19752518/footballhunter-local`

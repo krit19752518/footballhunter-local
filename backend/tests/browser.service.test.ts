@@ -53,7 +53,7 @@ describe('BrowserService Live Verification Unit Tests', () => {
             })
           };
         }),
-        evaluate: jest.fn().mockResolvedValue('Some header text with Team A 1:3 Team B info')
+        evaluate: jest.fn().mockResolvedValue('Some header text with Team A 1 - 3 Team B info')
       };
 
       const result = await BrowserService.extractLiveScore(mockPage, 'Team A', 'Team B');

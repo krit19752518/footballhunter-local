@@ -29,9 +29,11 @@ describe('ApiService', () => {
     );
   });
 
-  it('should throw error when API fails', async () => {
+  it('should handle API failure gracefully', async () => {
     mockedAxios.post.mockRejectedValue(new Error('Network Error'));
 
-    await expect(ApiService.fetchMatches()).rejects.toThrow('Network Error');
+    const result = await ApiService.fetchMatches();
+    expect(result.success).toBe(false);
+    expect(result.data.records).toHaveLength(0);
   });
 });

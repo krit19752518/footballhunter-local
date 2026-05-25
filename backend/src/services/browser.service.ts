@@ -332,6 +332,17 @@ private static async executeTask(task: any) {
     this.isTestRunning = isSimulationTask;
 
     try {
+      // Balance Check ก่อนแทงจริง (ไม่ต้องเช็กเมื่อเป็น Test)
+      if (!isSimulationTask) {
+        const currentBalance = await this.getActualBalance();
+        if (currentBalance !== null && currentBalance < (amount || 10)) {
+          this.smartLog(`❌ INSUFFICIENT BALANCE! Required: ${amount || 10}, Current: ${currentBalance}. Aborting...`);
+          throw new Error(`Insufficient balance: ${currentBalance} < ${amount || 10}`);
+        } else if (currentBalance !== null) {
+          this.smartLog(`💰 Balance Check OK: ${currentBalance} ≥ ${amount || 10}`);
+        }
+      }
+
       // Step 1: ค้นหาลีก
       await this.performSearch(page, leagueName);
       
@@ -345,6 +356,45 @@ private static async executeTask(task: any) {
 
       // 🟢 เพิ่มการรอให้ป้ายราคาแรกปรากฏขึ้น ก่อนเริ่มค้นหา
       await page.locator('._bet-box_1ckm8_45 ._bet-label_1ckm8_65').first().waitFor({ state: 'visible', timeout: 15000 }); 
+
+      // --- Live Score Verification before Staking ---
+      if (taskId && taskId !== 'test-task-id') {
+        const cleanName = (name: string) => {
+          if (!name) return "";
+          return name.replace(/\[.*?\]/g, '').replace(/สโมสรฟุตบอล|สโมสร|เอฟซี|ยูไนเต็ด|U\d+|[\(\)]/g, '').trim();
+        };
+        const getUniqueKey = (name: string) => {
+          const cleaned = cleanName(name);
+          const words = cleaned.split(/\s+/).filter(w => w.length > 2);
+          return words.length === 0 ? cleaned.substring(0, 5) : words.sort((a, b) => b.length - a.length)[0];
+        };
+
+        const homeTeamPart = matchName.split(' vs ')[0] || "";
+        const awayTeamPart = matchName.split(' vs ')[1] || "";
+        const homeKey = getUniqueKey(homeTeamPart);
+        const awayKey = getUniqueKey(awayTeamPart);
+
+        this.smartLog(`🕵️ Verifying live score before proceeding...`);
+        const signalRecord = await prisma.signal.findUnique({ where: { id: taskId } }).catch(() => null);
+        if (signalRecord && signalRecord.value) {
+          const signalScoreStr = signalRecord.value; // e.g., "0-0"
+          const liveScore = await BrowserService.extractLiveScore(page, homeKey, awayKey);
+          if (liveScore) {
+            const liveScoreStr = `${liveScore.scoreHome}-${liveScore.scoreAway}`;
+            if (liveScoreStr !== signalScoreStr) {
+              this.smartLog(`🚨 SCORE CHANGED! Signal Score: ${signalScoreStr}, Web Live Score: ${liveScoreStr}`);
+              throw new Error(`Score changed before staking (Signal: ${signalScoreStr}, Live: ${liveScoreStr})`);
+            } else {
+              this.smartLog(`✅ Score verified matches signal score: ${liveScoreStr}`);
+            }
+          } else {
+            this.smartLog(`⚠️ Could not parse live score from page header. Proceeding with caution...`);
+          }
+        } else {
+          this.smartLog(`ℹ️ No recorded score for Signal ${taskId}. Skipping verification...`);
+        }
+      }
+      // -----------------------------------------------
 
       // Step 3: หาราคา
       this.smartLog(`[Step 15] 🔍 กำลังหาราคา...`);
@@ -574,9 +624,215 @@ private static async ensureBasketEmpty(page: Page) {
     }
   }
 
-  public static async getActualBalance(): Promise<number | null> { return this.lastBalance; }
-  public static getCachedBalance(): number | null { return this.lastBalance; }
-  public static async extractLiveScore(page: any, homeKey: string, awayKey: string): Promise<{ scoreHome: number; scoreAway: number } | null> { return null; }
+  public static async getActualBalance(): Promise<number | null> {
+    const page = this.page;
+    if (!page) {
+      this.smartLog(`[BALANCE-SYNC] ⚠️ No active page instance found yet.`);
+      return this.lastBalance;
+    }
+
+    // ถ้ายอดเงินล่าสุดเคยอัปเดตไปไม่ถึง 10 วินาทีที่แล้ว ให้ดึงจาก Cache ทันที เพื่อประหยัด CPU และกัน Log รก
+    const now = Date.now();
+    if (this.lastBalance !== null && (now - this.lastBalanceTime) < 10000) {
+      return this.lastBalance;
+    }
+
+    try {
+      // ปิด Popup กวนใจก่อนสแกนยอดเงิน
+      await this.closeAnnoyingPopups(page).catch(() => {});
+
+      // 1. ลองดึงจาก Selector ทั่วไป (เพิ่มคลาสเฉพาะเจาะจงของเว็บบาลานซ์ด้านซ้ายบน)
+      const selectors = [
+        '.global-currency-info-index',
+        '.currency-count',
+        '.currency-info-custom',
+        '.lobby-base-header__balance',
+        '[class*="balance"]',
+        '[class*="credit"]',
+        '[class*="money"]',
+        '.user-balance',
+        '.balance-amount'
+      ];
+      
+      const frames = page.frames();
+
+      // ลองดึงจาก Main page และ IFrames ผ่าน selectors
+      for (const frame of frames) {
+        for (const sel of selectors) {
+          const el = frame.locator(sel).first();
+          if (await el.isVisible().catch(() => false)) {
+            const text = await el.innerText().catch(() => "");
+            const num = parseFloat(text.replace(/[^0-9.]/g, ''));
+            if (!isNaN(num) && num > 0) {
+              this.smartLog(`[BALANCE-SYNC] 💰 Found balance via selector "${sel}" in frame: ${num}`);
+              this.lastBalance = num;
+              this.lastBalanceTime = Date.now();
+              return num;
+            }
+          }
+        }
+      }
+
+      // 2. ดึงผ่าน Text TreeWalker ในทุกเฟรม (ค้นหาตัวเลขทศนิยมเดี่ยวๆ ใน Header)
+      for (const frame of frames) {
+        const num = await frame.evaluate(() => {
+          const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          let node;
+          const candidates = [];
+          while (node = walk.nextNode()) {
+            const txt = node.textContent?.trim() || "";
+            // ล้างอักขระพิเศษเพื่อตรวจสอบเฉพาะทศนิยม (รองรับ สัญลักษณ์เงิน และธงชาติ)
+            const cleaned = txt.replace(/[^0-9.]/g, '').trim();
+            const parts = cleaned.split('.');
+            if (parts.length === 2 && parts[1].length === 2) {
+              const val = parseFloat(cleaned);
+              if (val > 0 && val < 1000000) {
+                const parent = node.parentElement;
+                if (parent) {
+                  const rect = parent.getBoundingClientRect();
+                  
+                  // ค้นหาและตรวจสอบว่า text นี้อยู่ใน Popup/Dialog/Wheel/Bonus/Activity หรือไม่
+                  let isInsidePopup = false;
+                  let curr: HTMLElement | null = parent;
+                  while (curr) {
+                    const cls = (curr.className || "").toString().toLowerCase();
+                    const id = (curr.id || "").toString().toLowerCase();
+                    if (
+                      cls.includes('popup') || cls.includes('dialog') || cls.includes('modal') || 
+                      cls.includes('overlay') || cls.includes('mask') || cls.includes('wheel') || 
+                      cls.includes('spin') || cls.includes('bonus') || cls.includes('task') ||
+                      cls.includes('lucky') || cls.includes('gift') || cls.includes('activity') ||
+                      cls.includes('award') || cls.includes('commission') || cls.includes('invite') ||
+                      id.includes('popup') || id.includes('dialog') || id.includes('modal') ||
+                      id.includes('overlay') || id.includes('mask') || id.includes('wheel') || 
+                      id.includes('spin') || id.includes('bonus') || id.includes('task') ||
+                      id.includes('lucky') || id.includes('gift') || id.includes('activity') ||
+                      id.includes('award') || id.includes('commission') || id.includes('invite')
+                    ) {
+                      isInsidePopup = true;
+                      break;
+                    }
+                    curr = curr.parentElement;
+                  }
+                  
+                  // กรองให้มั่นใจว่ามองเห็นได้จริง และอยู่ในบริเวณส่วนบนของหน้าจอ (Header/Profile) และไม่อยู่ใน Popup
+                  if (!isInsidePopup && rect.width > 0 && rect.height > 0 && rect.top < 400) {
+                    candidates.push({ val, top: rect.top });
+                  }
+                }
+              }
+            }
+          }
+          candidates.sort((a, b) => a.top - b.top);
+          return candidates.length > 0 ? candidates[0].val : null;
+        }).catch(() => null);
+
+        if (num !== null && !isNaN(num) && num > 0) {
+          this.smartLog(`[BALANCE-SYNC] 💰 Found balance via dynamic text scan in frame: ${num}`);
+          this.lastBalance = num;
+          this.lastBalanceTime = Date.now();
+          return num;
+        }
+      }
+
+      this.smartLog(`[BALANCE-SYNC] ℹ️ Scanning page text, nothing found yet. Last balance: ${this.lastBalance}`);
+      return this.lastBalance;
+    } catch (e: any) {
+      this.smartLog(`[BALANCE-SYNC] ❌ Error scraping balance: ${e.message}`);
+      return this.lastBalance;
+    }
+  }
+
+  public static getCachedBalance(): number | null {
+    return this.lastBalance;
+  }
+
+  public static async extractLiveScore(page: any, homeKey: string, awayKey: string): Promise<{ scoreHome: number; scoreAway: number } | null> {
+    try {
+      // วิธีการที่ 1: ค้นหาข้อความแบบยึดแพทเทิร์นทศนิยม/สกอร์ (เช่น "0 - 0") ใน Header
+      const scoreElements = page.locator('div, span, p');
+      const count = await scoreElements.count().catch(() => 0);
+      
+      for (let i = 0; i < count; i++) {
+        const el = scoreElements.nth(i);
+        const isVisible = await el.isVisible().catch(() => false);
+        if (!isVisible) continue;
+        
+        const text = await el.innerText().catch(() => "");
+        // มองหารูปแบบที่เหมือนสกอร์: เช่น "0 - 0", "3 - 1" (เน้นเครื่องหมายขีดกลาง เพื่อไม่ให้สับสนกับเวลาที่เป็น colon)
+        const scorePattern = /^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*$/;
+        const match = text.match(scorePattern);
+        if (match) {
+          // ตรวจสอบตำแหน่งความน่าจะเป็น (เช่น อยู่แถวบน)
+          const box = await el.boundingBox().catch(() => null);
+          if (box && box.y < 350) { // ส่วนใหญ่ Header สกอร์จะอยู่บนสุดของจอภาพมือถือ
+            const scoreHome = parseInt(match[1], 10);
+            const scoreAway = parseInt(match[2], 10);
+            
+            // ป้องกันการจำแนกเวลาสับสนกับสกอร์ (สกอร์ฟุตบอลเป็นไปไม่ได้ที่จะเกิน 15 ลูกต่อทีม)
+            if (scoreHome > 15 || scoreAway > 15) {
+              continue;
+            }
+            
+            this.smartLog(`[LIVE-SCORE] Found score via format pattern: ${scoreHome}-${scoreAway}`);
+            return { scoreHome, scoreAway };
+          }
+        }
+      }
+
+      // วิธีการที่ 2: ค้นหา Node ที่มีชื่อทีมและหาตัวเลขใกล้เคียง
+      // ค้นหาตำแหน่งของชื่อทีมเหย้า
+      const homeTeamEl = page.locator('div, span').filter({ hasText: homeKey }).first();
+      const awayTeamEl = page.locator('div, span').filter({ hasText: awayKey }).first();
+
+      if (await homeTeamEl.isVisible() && await awayTeamEl.isVisible()) {
+        // มองหาองค์ประกอบที่มีตัวเลขเดี่ยวๆ ใน Container เดียวกันหรือ Sibling
+        // ดึงข้อความทั้งหมดของ Container แถบข้อมูลด้านบน
+        const headerText = await page.evaluate(() => {
+          const header = document.querySelector('.lobby-base-header, header, [class*="header"]');
+          return header ? (header as HTMLElement).innerText : document.body.innerText;
+        }).catch(() => "");
+
+        // มองหารูปแบบสกอร์ในข้อความ Header เช่น "ทีม A 0 - 0 ทีม B" (ใช้ขีดกลาง ไม่ใช้ colon)
+        const scoreMatches = headerText.match(/(\d{1,2})\s*-\s*(\d{1,2})/);
+        if (scoreMatches) {
+          const scoreHome = parseInt(scoreMatches[1], 10);
+          const scoreAway = parseInt(scoreMatches[2], 10);
+          
+          if (scoreHome <= 15 && scoreAway <= 15) {
+            this.smartLog(`[LIVE-SCORE] Found score via Header match: ${scoreHome}-${scoreAway}`);
+            return { scoreHome, scoreAway };
+          }
+        }
+        
+        // ค้นหาใน Parent หรือ Sibling ของชื่อทีม
+        const homeScore = await page.evaluate((el: any) => {
+          const parent = el.parentElement;
+          if (!parent) return null;
+          // หา child ที่เป็นตัวเลขเดี่ยว
+          const numbers = Array.from(parent.querySelectorAll('div, span')).map((e: any) => e.innerText.trim()).filter((t: string) => /^\d+$/.test(t));
+          return numbers.length > 0 ? parseInt(numbers[0], 10) : null;
+        }, await homeTeamEl.elementHandle()).catch(() => null);
+
+        const awayScore = await page.evaluate((el: any) => {
+          const parent = el.parentElement;
+          if (!parent) return null;
+          const numbers = Array.from(parent.querySelectorAll('div, span')).map((e: any) => e.innerText.trim()).filter((t: string) => /^\d+$/.test(t));
+          return numbers.length > 0 ? parseInt(numbers[0], 10) : null;
+        }, await awayTeamEl.elementHandle()).catch(() => null);
+
+        if (homeScore !== null && awayScore !== null && homeScore <= 15 && awayScore <= 15) {
+          this.smartLog(`[LIVE-SCORE] Found score via relative siblings: ${homeScore}-${awayScore}`);
+          return { scoreHome: homeScore, scoreAway: awayScore };
+        }
+      }
+
+      return null;
+    } catch (e: any) {
+      this.smartLog(`[LIVE-SCORE] Error parsing score: ${e.message}`);
+      return null;
+    }
+  }
   
   // บันทึกด่านแว่นขยายฟุตบอล: ตรึงพิกัดเจาะ Selector ค้นหาเฉพาะของหมวดแถบฟุตบอลสติ๊กกี้ด้านล่าง ไม่หลุดลอยขึ้นฝั่งสล็อตด้านบนเด็ดขาด
 private static async performSearch(page: any, leagueName: string) {
