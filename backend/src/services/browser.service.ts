@@ -399,11 +399,26 @@ private static async executeTask(task: any) {
       
       // หน่วงเวลารอให้หน้าต่างสรุปตั๋วสีเขียวลอยขึ้นมาจนเสร็จสิ้น
       this.smartLog(`⏳ กำลังรอระบบเว็บประมวลผลบิลเดิมพัน...`);
-      await Promise.race([
-          page.waitForSelector(':text("ส่งแล้ว")', { timeout: 6000 }),
-          page.waitForSelector(':text("สำเร็จ")', { timeout: 6000 }),
-          page.waitForTimeout(5000) // ตัวค้ำประกันความปลอดภัยป้องกัน TypeScript Error ด้วย Promise.race
-      ]).catch(() => {});
+      
+      const betResult = await Promise.race([
+          page.waitForSelector(':text("ส่งแล้ว")', { timeout: 6000 }).then(() => 'SUCCESS'),
+          page.waitForSelector(':text("สำเร็จ")', { timeout: 6000 }).then(() => 'SUCCESS'),
+          page.waitForSelector(':text("จำนวนเงินของคุณไม่พอ")', { timeout: 6000 }).then(() => 'INSUFFICIENT_FUNDS'),
+          page.waitForSelector(':text("ล้มเหลว")', { timeout: 6000 }).then(() => 'FAILED'),
+          page.waitForTimeout(6000).then(() => 'TIMEOUT')
+      ]).catch(() => 'TIMEOUT');
+
+      if (betResult === 'INSUFFICIENT_FUNDS') {
+          const closeCartBtn = page.locator('.van-action-sheet__close, [class*="close"], ._icon_close_').first();
+          if (await closeCartBtn.isVisible({ timeout: 1500 })) {
+              await closeCartBtn.click({ force: true });
+          } else {
+              await cartBtn.click({ force: true }).catch(() => {});
+          }
+          throw new Error("ยอดเงินคงเหลือไม่พอสำหรับการเดิมพัน (Insufficient funds)");
+      } else if (betResult === 'FAILED') {
+          throw new Error("ระบบเว็บไซต์ปฏิเสธการเดิมพัน หรือเกิดข้อผิดพลาด");
+      }
       
       this.smartLog(`✅ ระบบขึ้นหน้ารายงานผลแล้ว กำลังสั่งปิดหน้าต่างสรุปตั๋ว...`);
       await page.waitForTimeout(1500);
