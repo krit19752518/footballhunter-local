@@ -23,8 +23,7 @@ export class SignalService {
   private static async checkStrongFavoriteDrop(match: any, odds: any) {
     const minutes = parseInt(match.matchTime || '0');
     
-    // [ปรับปรุง] จำกัดเฉพาะช่วง 60-75 นาที เพื่อลด false signal ช่วงเริ่มต้นและปลายเกม
-    if (minutes < 60 || minutes > 75) return;
+    // (ลบการจำกัดเวลา 60-75 นาทีออก เพื่อให้ประมวลผลได้ทุกนาที)
     
     const history = odds.history;
     if (history.length < 3) return; 
@@ -51,8 +50,7 @@ export class SignalService {
   private static async checkLineShift(match: any, odds: any) {
     const minutes = parseInt(match.matchTime || '0');
     
-    // [ปรับปรุง] จำกัดเฉพาะช่วง 60-75 นาที เพื่อลด false signal ช่วงนาทีแรกและปลายเกม
-    if (minutes < 60 || minutes > 75) return;
+    // (ลบการจำกัดเวลา 60-75 นาทีออก)
     
     const history = odds.history;
     if (history.length < 2) return;
@@ -69,11 +67,7 @@ export class SignalService {
         opposite: direction === 'เพิ่มขึ้น' ? (history[0].awayOdds || 0.9) : (history[0].homeOdds || 0.9)
       };
       
-      // ถ้าลายน์ไม่เข้ากลุ่ม Negative Handicap แรงๆ ให้ข้ามสัญญาณ
-      const currentLineValue = parseFloat(history[0].line || '0');
-      if (isNaN(currentLineValue) || currentLineValue > -0.5) {
-        return;
-      }
+    // (อนุญาตลายน์บวกและลายน์อ่อนให้ผ่านได้)
       
       await this.createSignalAndBet(match, 'แฮนดิแคป (HDP)', `🚧 ขยับกำแพง: แต้มต่อ ${direction} (${history[history.length - 1].line} -> ${history[0].line}) 🔥 ${rec}`, oddsOption, history[0].line, betSide, odds.type);
     }
@@ -82,55 +76,8 @@ export class SignalService {
   // [ปรับปรุง] ลบ Late Over Goal signal - False signal มากเกินไป (ลบทั้งฟังก์ชัน)
 
   private static async createSignalAndBet(match: any, logicType: string, message: string, oddsOption: { recommended: number; opposite: number }, lineAtBet: string, betSide: string, oddsType: string) {
-    // ข้ามสัญญาณที่เป็นครึ่งแรก (First Half / FH) ทั้งหมดตามคำขอของผู้ใช้
-    if (oddsType.startsWith('FH')) {
-      return;
-    }
-
-    // [ข้อ 3] ไม่แทงช่วง 0-15 นาทีแรก (ราคาไม่เสถียร Win Rate ต่ำ)
+    // (ลบการบล็อกครึ่งแรก, การบล็อกเวลา, การแบนลีก, และการจำกัดราคาติดลบ ออกทั้งหมด)
     const currentMinutes = parseInt(match.matchTime || '0');
-    if (currentMinutes > 0 && currentMinutes <= 15) {
-      return;
-    }
-
-    // [ข้อ 0] ไม่แทงช่วงปลายเกมเกิน 75 นาที เพราะผลการวิเคราะห์พบ accuracy 0%
-    if (currentMinutes > 75) {
-      return;
-    }
-
-    // [ข้อ 0b] แบนลีกที่ performance แย่จากฐานข้อมูลย้อนหลัง
-    const badLeagues = [
-      'ฟินแลนด์ โคลโมเน่น',
-      'สวีเดน ดิวิชั่น 2',
-      'โปแลนด์ ลีกา 4',
-      'โปแลนด์ ลีกา 3',
-      'บัลแกเรีย เฟิสต์ โปรเฟสชันนัล ลีก-รอบเพลย์ออฟ'
-    ];
-    if (badLeagues.includes(match.leagueName)) {
-      return;
-    }
-
-    // [ข้อ X] บล็อกสัญญาณ HDP 0 / 0.25 และ O/U แบบถาวร
-    const normalizedLogicType = logicType.trim();
-    if (normalizedLogicType.includes('HDP') && (normalizedLogicType.includes('[0]') || normalizedLogicType.includes('[0.25]'))) {
-      return;
-    }
-    if (normalizedLogicType.includes('O/U') || normalizedLogicType.includes('สูง/ต่ำ')) {
-      return;
-    }
-    const blockedLines = ['0', '0.00', '0.25'];
-    if (blockedLines.includes((lineAtBet || '').trim())) {
-      return;
-    }
-
-    // [ข้อ 4] จำกัดให้แทงเฉพาะ Negative Handicap ที่แรงกว่า -0.5
-    const lineVal = parseFloat(lineAtBet || '0');
-    if (isNaN(lineVal)) {
-      return;
-    }
-    if (lineVal > -0.5) {
-      return;
-    }
 
     // (ลบ Safety Guard เดิมออกเพื่อให้โหมด OPPOSITE สามารถทำงานร่วมกับกฎ Negative Handicap ได้)
 
