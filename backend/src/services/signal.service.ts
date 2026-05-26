@@ -132,11 +132,7 @@ export class SignalService {
       return;
     }
 
-    // [ข้อ 1] กรอง Line ลบในโหมด OPPOSITE (Safety Guard)
-    const betMode = (process.env.BET_MODE || 'FOLLOW').toUpperCase();
-    if (betMode === 'OPPOSITE' && lineVal < 0) {
-      return;
-    }
+    // (ลบ Safety Guard เดิมออกเพื่อให้โหมด OPPOSITE สามารถทำงานร่วมกับกฎ Negative Handicap ได้)
 
     const fullLogicType = `${logicType} [${lineAtBet}]`;
     const isSecondHalf = currentMinutes > 45 || match.matchTime?.includes('2H');
